@@ -20,6 +20,9 @@ fi
 
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty')
 [ -n "$CWD" ] || CWD=$(pwd)
+if ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null); then
+  CWD="$ROOT"
+fi
 
 ACTIVE_FILE="$CWD/.codex/.vdgg-active"
 [ -f "$ACTIVE_FILE" ] || exit 0
@@ -176,4 +179,3 @@ case "$PHASE" in
 esac
 
 exit 0
-

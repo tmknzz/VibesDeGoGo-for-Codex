@@ -29,7 +29,7 @@ Recommended setup is global hooks, so VDGG rules apply in every repository witho
 $HOME/.agents/skills/vibesdegogo/
 ```
 
-Then add the hook commands to `~/.codex/hooks.json` or the equivalent Codex hook config. The commands should point to the installed skill path:
+Then add the hook commands to `~/.codex/hooks.json` or the equivalent Codex hook config. The commands should point to the installed skill path. `UserPromptSubmit` makes VDGG the default workflow for coding work in any git repository; the tool hooks enforce state once VDGG starts.
 
 ```json
 {
@@ -64,6 +64,17 @@ Then add the hook commands to `~/.codex/hooks.json` or the equivalent Codex hook
           {
             "type": "command",
             "command": "bash -lc 'VDGG_CODEX_SKILL_DIR=\"${VDGG_CODEX_SKILL_DIR:-$HOME/.agents/skills/vibesdegogo}\"; bash \"$VDGG_CODEX_SKILL_DIR/scripts/vdgg-hook-stop.sh\"'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'VDGG_CODEX_SKILL_DIR=\"${VDGG_CODEX_SKILL_DIR:-$HOME/.agents/skills/vibesdegogo}\"; bash \"$VDGG_CODEX_SKILL_DIR/scripts/vdgg-hook-userprompt.sh\"'",
             "timeout": 5
           }
         ]

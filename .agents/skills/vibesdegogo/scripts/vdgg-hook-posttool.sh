@@ -11,6 +11,9 @@ fi
 
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty')
 [ -n "$CWD" ] || CWD=$(pwd)
+if ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null); then
+  CWD="$ROOT"
+fi
 ACTIVE_FILE="$CWD/.codex/.vdgg-active"
 [ -f "$ACTIVE_FILE" ] || exit 0
 VDGG_ID=$(cat "$ACTIVE_FILE")
@@ -91,4 +94,3 @@ if [ "$ERROR_DETECTED" -eq 1 ]; then
 fi
 
 exit 0
-

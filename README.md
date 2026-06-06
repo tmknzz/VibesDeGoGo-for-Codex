@@ -46,6 +46,9 @@ cp -R .agents/skills/vibesdegogo "$HOME/.agents/skills/vibesdegogo"
 ```
 
 Then register global hooks in `~/.codex/hooks.json` or `~/.codex/config.toml`.
+The global `UserPromptSubmit` hook makes VDGG the default for coding work in
+any git repository. The tool hooks enforce the workflow after VDGG state is
+initialized in that repository root.
 See:
 
 ```text

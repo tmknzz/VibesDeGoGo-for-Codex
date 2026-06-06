@@ -36,6 +36,18 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'VDGG_CODEX_SKILL_DIR=\"${VDGG_CODEX_SKILL_DIR:-$HOME/.agents/skills/vibesdegogo}\"; bash \"$VDGG_CODEX_SKILL_DIR/scripts/vdgg-hook-userprompt.sh\"'",
+            "timeout": 5,
+            "statusMessage": "Checking VibesDeGoGo! default workflow"
+          }
+        ]
+      }
     ]
   }
 }

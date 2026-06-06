@@ -1,7 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-: "${VDGG_CWD:=$(pwd)}"
+_vdgg_resolve_root() {
+  local cwd="${1:-$(pwd)}"
+  git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$cwd"
+}
+
+if [ -z "${VDGG_CWD:-}" ]; then
+  VDGG_CWD=$(_vdgg_resolve_root "$(pwd)")
+fi
 VDGG_STATE_DIR="${VDGG_STATE_DIR:-${VDGG_CWD}/.codex}"
 VDGG_TASKS_DIR="${VDGG_TASKS_DIR:-${VDGG_CWD}/tasks/vdgg}"
 

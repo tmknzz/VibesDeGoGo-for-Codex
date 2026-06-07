@@ -37,6 +37,8 @@ PHASE=$(grep '^phase=' "$STATE_FILE" | cut -d= -f2 || true)
 STEP=$(grep '^step=' "$STATE_FILE" | cut -d= -f2 || true)
 LOOP_COUNT=$(grep '^loop_count=' "$STATE_FILE" | cut -d= -f2 || true)
 LOOP_COUNT="${LOOP_COUNT:-0}"
+TASK_ALLOWLIST_FILE=$(grep '^task_allowlist_file=' "$STATE_FILE" | cut -d= -f2- || true)
+TASK_GATE_FILE="$CWD/.codex/.vdgg-task-gate-${VDGG_ID}-${LOOP_COUNT}"
 TASKS_DIR="$CWD/tasks/vdgg/${VDGG_ID}"
 
 block() {
@@ -60,9 +62,26 @@ changed_files() {
   esac
 }
 
+normalize_project_path() {
+  local p="$1"
+  case "$p" in
+    "$CWD"/*) p="${p#"$CWD"/}" ;;
+    ./*) p="${p#./}" ;;
+  esac
+  printf '%s\n' "$p"
+}
+
 path_is_tasks_file() {
   local p="$1"
   [[ "$p" == "$TASKS_DIR/"* ]] || [[ "$p" == "tasks/vdgg/${VDGG_ID}/"* ]]
+}
+
+path_is_task_allowlisted() {
+  local p
+  p=$(normalize_project_path "$1")
+  [ -n "${TASK_ALLOWLIST_FILE:-}" ] || return 1
+  [ -f "$TASK_ALLOWLIST_FILE" ] || return 1
+  grep -qxF "$p" "$TASK_ALLOWLIST_FILE"
 }
 
 path_is_state_file() {
@@ -138,11 +157,23 @@ case "$PHASE" in
     fi
     ;;
   implementing|testing)
+    if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
+      [ -n "${TASK_ALLOWLIST_FILE:-}" ] && [ -f "$TASK_ALLOWLIST_FILE" ] \
+        || block "No active task allowlist. Run vdgg_task_begin before editing implementation files."
+      while IFS= read -r file_path; do
+        [ -n "$file_path" ] || continue
+        path_is_task_allowlisted "$file_path" \
+          || block "Task allowlist blocks edit: $(normalize_project_path "$file_path")"
+      done < <(changed_files)
+    fi
     if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
       block "Commit is blocked before Step 9."
     fi
     if [ "$TOOL_NAME" = "Bash" ] && [ "$PHASE" = "testing" ]; then
       if printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(advance|loop|write)[[:space:]]+[0-9]+[[:space:]]+verified'; then
+        if [ -n "${TASK_ALLOWLIST_FILE:-}" ] && [ -f "$TASK_ALLOWLIST_FILE" ]; then
+          [ -f "$TASK_GATE_FILE" ] || block "Run vdgg_task_gate successfully before verified."
+        fi
         REVIEW_FILE="$CWD/.codex/.vdgg-review-sentinel-${VDGG_ID}-${LOOP_COUNT}"
         [ -f "$REVIEW_FILE" ] || block "Run the Codex review gate with vdgg_state_mark_reviewed before verified."
         MODIFIED=$(grep '^modified=' "$REVIEW_FILE" | sed 's/^modified=//' | head -1)

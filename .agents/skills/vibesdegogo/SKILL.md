@@ -24,6 +24,7 @@ Do not use it for wording-only requests, open-ended discussion, or brainstorming
 - Hook commands should call the installed skill path, normally `$HOME/.agents/skills/vibesdegogo`, or set `VDGG_CODEX_SKILL_DIR` to an absolute skill directory. Do not assume the target project contains `.agents/skills/vibesdegogo`.
 - Codex hook coverage is a guardrail, not a complete enforcement boundary. When unsure, stop before risky work.
 - Codex does not have the exact Claude Code `simplify` gate. Use the Codex review gate in this skill instead: after verification, run a focused simplification/review pass yourself, record it with `vdgg_state_mark_reviewed`, then advance to `verified`.
+- Each implementation loop must use a task allowlist and task gate: `vdgg_task_begin` records the allowed files and baseline, `vdgg_task_gate` must pass before `verified`, and `vdgg_task_rollback` reverts the current task when the gate fails.
 
 Use this resolver inside every shell command that calls state helpers:
 
@@ -162,6 +163,7 @@ Choose exactly one task sized for a full implementation cycle:
 - split separate provider/API/auth/key-storage/UI/persistence/versioning risks into separate tasks;
 - do not select umbrella tasks such as `T1-T3` or "all model providers";
 - if the selected task cannot be verified with the current acceptance criteria in one Step 7, split it before Step 6.
+- declare an allowlist of every implementation/test/documentation file this task is allowed to change; keep it narrow and task-specific.
 
 Choose one task and record it:
 
@@ -172,8 +174,10 @@ VDGG_CODEX_SKILL_DIR="${VDGG_CODEX_SKILL_DIR:-$HOME/.agents/skills/vibesdegogo}"
 [ -f "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh" ] || VDGG_CODEX_SKILL_DIR="$VDGG_REPO_ROOT/.agents/skills/vibesdegogo"
 source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_advance 5 task-selected
-vdgg_state_write 5 task-selected 0 "T1: title"
+vdgg_task_begin "T1: title" path/to/file1 path/to/file2
 ```
+
+The pretool hook blocks implementation edits until `vdgg_task_begin` has created an active allowlist. During Step 6 and Step 7, hook-mediated `apply_patch`, `Edit`, and `Write` edits outside that allowlist are blocked.
 
 ## Step 6: Implement
 
@@ -192,7 +196,7 @@ Do not run verification commands in this phase.
 
 ## Step 7: Verify And Review
 
-State 1 to 3 concrete verification checks, then run them.
+State 1 to 3 concrete verification checks, then run them through `vdgg_task_gate`. Pass the verification command as separate shell words, for example `vdgg_task_gate npm test`, or use `vdgg_task_gate bash -lc 'command with pipes'`.
 
 ```bash
 # [VibesDeGoGo! Step 7 Start] step=7, phase=testing, loop=0
@@ -201,6 +205,7 @@ VDGG_CODEX_SKILL_DIR="${VDGG_CODEX_SKILL_DIR:-$HOME/.agents/skills/vibesdegogo}"
 [ -f "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh" ] || VDGG_CODEX_SKILL_DIR="$VDGG_REPO_ROOT/.agents/skills/vibesdegogo"
 source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_advance 7 testing
+vdgg_task_gate <verification-command> [args...]
 ```
 
 After checks pass, do a focused simplification/review pass:
@@ -231,7 +236,9 @@ source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_advance 7 verified
 ```
 
-If verification fails or review changes implementation files, go to reflection.
+The pretool hook blocks `verified` until both `vdgg_task_gate` and `vdgg_state_mark_reviewed` have succeeded.
+
+If verification fails, run `vdgg_task_rollback`, go to reflection, select exactly one revised hypothesis, and retry. If review changes implementation files, go to reflection and retest.
 
 ## Step 6-R: Reflection
 
@@ -263,6 +270,8 @@ VDGG_CODEX_SKILL_DIR="${VDGG_CODEX_SKILL_DIR:-$HOME/.agents/skills/vibesdegogo}"
 source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_loop 6 implementing
 ```
+
+If the revised hypothesis changes the file scope, go back to Step 5 and run `vdgg_task_begin` again with a new allowlist before editing.
 
 ## Step 8: Progress And Validation Request
 
@@ -328,3 +337,4 @@ Do not stop for progress confirmation. Stop intentionally with `[Intentional Sto
 - destructive operations,
 - broad renames,
 - inability to satisfy or verify acceptance criteria.
+- inability to rollback a failed task gate cleanly.

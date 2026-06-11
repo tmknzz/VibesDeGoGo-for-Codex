@@ -41,6 +41,40 @@ if [ "$TOOL_NAME" = "apply_patch" ] && [ "$PHASE" = "testing" ]; then
   fi
 fi
 
+if [ "$PHASE" = "testing" ] && { [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; }; then
+  REVIEW_FILE="$CWD/.codex/.vdgg-review-sentinel-${VDGG_ID}-${LOOP_COUNT}"
+  if [ -f "$REVIEW_FILE" ]; then
+    EDITED_FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')
+    # Sidecar files are internal workflow files, not implementation changes.
+    if [[ "$EDITED_FILE_PATH" == *".codex/.vdgg-"* ]]; then
+      exit 0
+    fi
+    # Task notes are workflow records, not implementation changes.
+    if [[ "$EDITED_FILE_PATH" == *"tasks/vdgg/"* ]]; then
+      exit 0
+    fi
+    # Append the edited file uniquely (comma-separated).
+    CURRENT_FILES=$(grep '^modified_files=' "$REVIEW_FILE" | head -1 | sed 's/^modified_files=//')
+    if [ -n "$EDITED_FILE_PATH" ] && [[ ",$CURRENT_FILES," != *",$EDITED_FILE_PATH,"* ]]; then
+      if [ -z "$CURRENT_FILES" ]; then
+        NEW_FILES="$EDITED_FILE_PATH"
+      else
+        NEW_FILES="${CURRENT_FILES},${EDITED_FILE_PATH}"
+      fi
+    else
+      NEW_FILES="$CURRENT_FILES"
+    fi
+    TMP=$(mktemp)
+    grep -v '^modified=' "$REVIEW_FILE" | grep -v '^modified_files=' > "$TMP" || true
+    {
+      echo "modified=1"
+      echo "modified_files=${NEW_FILES}"
+    } >> "$TMP"
+    mv "$TMP" "$REVIEW_FILE"
+  fi
+  exit 0
+fi
+
 if [ "$TOOL_NAME" != "Bash" ]; then
   exit 0
 fi

@@ -67,20 +67,22 @@ _vdgg_rm_dir_glob() {
   find "$1" -maxdepth 1 -name "$2" -type d -exec rm -rf {} + 2>/dev/null || true
 }
 
+# NOTE: never declare `local path` in these helpers — when the script is
+# sourced into zsh, `path` is tied to $PATH and localizing it empties PATH.
 _vdgg_normalize_path() {
-  local path="$1"
-  case "$path" in
-    "$VDGG_CWD"/*) path="${path#"$VDGG_CWD"/}" ;;
-    ./*) path="${path#./}" ;;
+  local entry="$1"
+  case "$entry" in
+    "$VDGG_CWD"/*) entry="${entry#"$VDGG_CWD"/}" ;;
+    ./*) entry="${entry#./}" ;;
   esac
-  printf '%s\n' "$path"
+  printf '%s\n' "$entry"
 }
 
 _vdgg_path_is_safe_relative() {
-  local path
-  path=$(_vdgg_normalize_path "$1")
-  [ -n "$path" ] || return 1
-  case "$path" in
+  local entry
+  entry=$(_vdgg_normalize_path "$1")
+  [ -n "$entry" ] || return 1
+  case "$entry" in
     /*|../*|*/../*|..|.) return 1 ;;
   esac
   return 0
@@ -112,6 +114,25 @@ vdgg_get_id() {
   _vdgg_get_active_id
 }
 
+# Append VibesDeGoGo!'s own sidecar patterns to the project .gitignore if it
+# exists and doesn't already contain them. Idempotent (uses a marker comment).
+# Skips silently when no .gitignore is present (we don't create one).
+# This prevents Step 9 from being blocked by surprise untracked .codex/ files
+# at commit time.
+_vdgg_ensure_gitignore() {
+  local gitignore="${VDGG_CWD}/.gitignore"
+  [ -f "$gitignore" ] || return 0
+  if grep -qF '# Codex / VibesDeGoGo!' "$gitignore"; then
+    return 0
+  fi
+  cat >> "$gitignore" <<'EOF'
+
+# Codex / VibesDeGoGo!
+.codex/.vdgg-*
+EOF
+  echo "vdgg-state: appended VibesDeGoGo! patterns to ${gitignore}" >&2
+}
+
 vdgg_state_init() {
   local id active_file state_file tasks_dir
   id=$(_vdgg_generate_id)
@@ -125,6 +146,10 @@ vdgg_state_init() {
   fi
 
   mkdir -p "$(dirname "$state_file")" "$tasks_dir"
+
+  # Ensure .gitignore is up to date so our sidecar files are never staged.
+  _vdgg_ensure_gitignore
+
   rm -f "${VDGG_STATE_DIR}/.vdgg-error-pending" 2>/dev/null || true
   _vdgg_rm_glob "${VDGG_STATE_DIR}" '.vdgg-review-sentinel-*'
   echo "$id" > "$active_file"
@@ -153,7 +178,8 @@ vdgg_state_read() {
 
 vdgg_state_write() {
   local new_step="$1" new_phase="$2" new_loop_count="$3" new_current_task="${4:-}"
-  local state_file current_step id task_allowlist_file task_base_ref
+  local new_task_allowlist_file="${5:-}" new_task_base_ref="${6:-}"
+  local state_file current_step id
 
   [[ "$new_step" =~ ^[0-9]+$ ]] || { echo "vdgg-state: invalid step" >&2; return 1; }
   [[ "$new_phase" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "vdgg-state: invalid phase" >&2; return 1; }
@@ -164,19 +190,29 @@ vdgg_state_write() {
   current_step=$(grep '^step=' "$state_file" | cut -d= -f2)
   _vdgg_check_step_transition "${current_step:-0}" "$new_step"
 
+  # Omitted optional fields preserve the stored values; a literal `-` clears a
+  # task field explicitly (used at the 8->5 boundary).
   if [ -z "$new_current_task" ]; then
     new_current_task=$(grep '^current_task=' "$state_file" | cut -d= -f2- || true)
   fi
-  task_allowlist_file=$(grep '^task_allowlist_file=' "$state_file" | cut -d= -f2- || true)
-  task_base_ref=$(grep '^task_base_ref=' "$state_file" | cut -d= -f2- || true)
+  if [ "$new_task_allowlist_file" = "-" ]; then
+    new_task_allowlist_file=""
+  elif [ -z "$new_task_allowlist_file" ]; then
+    new_task_allowlist_file=$(grep '^task_allowlist_file=' "$state_file" | cut -d= -f2- || true)
+  fi
+  if [ "$new_task_base_ref" = "-" ]; then
+    new_task_base_ref=""
+  elif [ -z "$new_task_base_ref" ]; then
+    new_task_base_ref=$(grep '^task_base_ref=' "$state_file" | cut -d= -f2- || true)
+  fi
   id=$(_vdgg_get_active_id)
   cat > "$state_file" <<EOF
 step=${new_step}
 phase=${new_phase}
 loop_count=${new_loop_count}
 current_task=${new_current_task}
-task_allowlist_file=${task_allowlist_file}
-task_base_ref=${task_base_ref}
+task_allowlist_file=${new_task_allowlist_file}
+task_base_ref=${new_task_base_ref}
 vdgg_id=${id}
 last_updated=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
@@ -184,11 +220,19 @@ EOF
 }
 
 vdgg_state_advance() {
-  local next_step="$1" next_phase="$2" state_file current_loop current_task
+  local next_step="$1" next_phase="$2" state_file current_step current_loop current_task
   state_file=$(_vdgg_get_state_file)
   [ -f "$state_file" ] || { echo "vdgg_state_advance: state file not found" >&2; return 1; }
-  current_loop=$(grep '^loop_count=' "$state_file" | cut -d= -f2)
+  current_step=$(grep '^step=' "$state_file" | cut -d= -f2)
   current_task=$(grep '^current_task=' "$state_file" | cut -d= -f2- || true)
+  # When Step 8 continues to Step 5, start the next task with a fresh loop and
+  # clear the previous task's allowlist/baseline so vdgg_task_begin is required
+  # again before any new-task edits.
+  if [ "${current_step:-0}" -eq 8 ] && [ "$next_step" -eq 5 ]; then
+    vdgg_state_write "$next_step" "$next_phase" 0 "$current_task" - -
+    return
+  fi
+  current_loop=$(grep '^loop_count=' "$state_file" | cut -d= -f2)
   vdgg_state_write "$next_step" "$next_phase" "${current_loop:-0}" "$current_task"
 }
 
@@ -217,8 +261,29 @@ EOF
   echo "vdgg-state: review gate marked for id=${id}, loop=${loop:-0}" >&2
 }
 
+# Run an explicit review pass and mark the review gate only when it succeeds.
+# With arguments, runs them as the review command. Without arguments, runs
+# REVIEW_COMMAND from .vdgg-target via bash -c. Exit status of a failing
+# review is propagated and no sentinel is written.
+vdgg_review_run() {
+  if [ "$#" -gt 0 ]; then
+    "$@" || return $?
+  else
+    local review_command=""
+    if [ -f "${VDGG_CWD}/.vdgg-target" ]; then
+      review_command=$(grep '^REVIEW_COMMAND=' "${VDGG_CWD}/.vdgg-target" | head -1 | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/' || true)
+    fi
+    if [ -z "$review_command" ]; then
+      echo "vdgg_review_run: no command given and no REVIEW_COMMAND in .vdgg-target" >&2
+      return 1
+    fi
+    bash -c "$review_command" || return $?
+  fi
+  vdgg_state_mark_reviewed
+}
+
 vdgg_task_begin() {
-  local task_title="${1:-}" id loop state_file allowlist_file baseline_dir baseline_status gate_file path normalized
+  local task_title="${1:-}" id loop allowlist_file baseline_dir baseline_status gate_file entry normalized
   shift || true
 
   [ -n "$task_title" ] || { echo "vdgg_task_begin: task title is required" >&2; return 1; }
@@ -227,7 +292,6 @@ vdgg_task_begin() {
   id=$(_vdgg_get_active_id)
   [ -n "$id" ] || { echo "vdgg_task_begin: active session not found" >&2; return 1; }
   loop=$(_vdgg_task_loop)
-  state_file=$(_vdgg_get_state_file)
   allowlist_file=$(_vdgg_task_allowlist_file_for_id "$id" "$loop")
   baseline_dir=$(_vdgg_task_baseline_dir_for_id "$id" "$loop")
   baseline_status=$(_vdgg_task_baseline_status_for_id "$id" "$loop")
@@ -238,12 +302,12 @@ vdgg_task_begin() {
   mkdir -p "$baseline_dir"
   : > "$allowlist_file"
 
-  for path in "$@"; do
-    _vdgg_path_is_safe_relative "$path" || {
-      echo "vdgg_task_begin: unsafe allowlist path: $path" >&2
+  for entry in "$@"; do
+    _vdgg_path_is_safe_relative "$entry" || {
+      echo "vdgg_task_begin: unsafe allowlist path: $entry" >&2
       return 1
     }
-    normalized=$(_vdgg_normalize_path "$path")
+    normalized=$(_vdgg_normalize_path "$entry")
     printf '%s\n' "$normalized" >> "$allowlist_file"
     if [ -e "$VDGG_CWD/$normalized" ]; then
       mkdir -p "$(dirname "$baseline_dir/$normalized")"
@@ -253,13 +317,8 @@ vdgg_task_begin() {
   sort -u "$allowlist_file" -o "$allowlist_file"
   git -C "$VDGG_CWD" status --porcelain=v1 --untracked-files=all > "$baseline_status"
 
-  vdgg_state_write 5 task-selected "$loop" "$task_title"
-  if command -v perl >/dev/null 2>&1; then
-    perl -0pi -e "s#task_allowlist_file=.*\\n#task_allowlist_file=${allowlist_file}\\n#; s#task_base_ref=.*\\n#task_base_ref=${baseline_status}\\n#" "$state_file"
-  else
-    sed -i.bak "s#^task_allowlist_file=.*#task_allowlist_file=${allowlist_file}#; s#^task_base_ref=.*#task_base_ref=${baseline_status}#" "$state_file"
-    rm -f "$state_file.bak"
-  fi
+  # Single state write records the task and both gate fields atomically.
+  vdgg_state_write 5 task-selected "$loop" "$task_title" "$allowlist_file" "$baseline_status"
   echo "vdgg-task: began '${task_title}' with allowlist ${allowlist_file}" >&2
 }
 
@@ -268,12 +327,16 @@ vdgg_task_changed_files() {
   id=$(_vdgg_get_active_id)
   [ -n "$id" ] || { echo "vdgg_task_changed_files: active session not found" >&2; return 1; }
   loop=$(_vdgg_task_loop)
-  baseline_status=$(_vdgg_task_baseline_status_for_id "$id" "$loop")
+  # Prefer the baseline recorded at vdgg_task_begin so the comparison stays
+  # anchored to the task even after vdgg_state_loop increments the loop.
+  baseline_status=$(grep '^task_base_ref=' "$(_vdgg_get_state_file)" | cut -d= -f2- || true)
+  [ -n "$baseline_status" ] || baseline_status=$(_vdgg_task_baseline_status_for_id "$id" "$loop")
   current_status=$(mktemp)
   git -C "$VDGG_CWD" status --porcelain=v1 --untracked-files=all > "$current_status"
   { [ -f "$baseline_status" ] && cat "$baseline_status"; cat "$current_status"; } \
     | sort | uniq -u | sed -E 's/^...//; s/^"//; s/"$//; s/.* -> //; /^\.codex\/\.vdgg-/d' \
-    | sort -u
+    | grep -v "^tasks/vdgg/${id}/" \
+    | sort -u || true
   rm -f "$current_status"
 }
 
@@ -282,7 +345,9 @@ vdgg_task_check_allowlist() {
   id=$(_vdgg_get_active_id)
   [ -n "$id" ] || { echo "vdgg_task_check_allowlist: active session not found" >&2; return 1; }
   loop=$(_vdgg_task_loop)
-  allowlist_file=$(_vdgg_task_allowlist_file_for_id "$id" "$loop")
+  # Resolve from state so the allowlist survives vdgg_state_loop increments.
+  allowlist_file=$(grep '^task_allowlist_file=' "$(_vdgg_get_state_file)" | cut -d= -f2- || true)
+  [ -n "$allowlist_file" ] || allowlist_file=$(_vdgg_task_allowlist_file_for_id "$id" "$loop")
   [ -f "$allowlist_file" ] || { echo "vdgg_task_check_allowlist: allowlist not found" >&2; return 1; }
   changed=$(vdgg_task_changed_files)
   [ -n "$changed" ] || return 0
@@ -314,12 +379,21 @@ EOF
 }
 
 vdgg_task_rollback() {
-  local id loop allowlist_file baseline_dir gate_file changed file
+  local id loop allowlist_file base_ref baseline_dir gate_file changed file
   id=$(_vdgg_get_active_id)
   [ -n "$id" ] || { echo "vdgg_task_rollback: active session not found" >&2; return 1; }
   loop=$(_vdgg_task_loop)
-  allowlist_file=$(_vdgg_task_allowlist_file_for_id "$id" "$loop")
-  baseline_dir=$(_vdgg_task_baseline_dir_for_id "$id" "$loop")
+  # Resolve from state so the allowlist survives vdgg_state_loop increments.
+  allowlist_file=$(grep '^task_allowlist_file=' "$(_vdgg_get_state_file)" | cut -d= -f2- || true)
+  [ -n "$allowlist_file" ] || allowlist_file=$(_vdgg_task_allowlist_file_for_id "$id" "$loop")
+  # Derive the baseline dir from the stored base_ref so rollback survives
+  # vdgg_state_loop increments; fall back to the current-loop derivation.
+  base_ref=$(grep '^task_base_ref=' "$(_vdgg_get_state_file)" | cut -d= -f2- || true)
+  if [ -n "$base_ref" ]; then
+    baseline_dir="${base_ref/baseline-status-/baseline-}"
+  else
+    baseline_dir=$(_vdgg_task_baseline_dir_for_id "$id" "$loop")
+  fi
   gate_file=$(_vdgg_task_gate_file_for_id "$id" "$loop")
   [ -f "$allowlist_file" ] || { echo "vdgg_task_rollback: allowlist not found" >&2; return 1; }
   [ -d "$baseline_dir" ] || { echo "vdgg_task_rollback: baseline dir not found" >&2; return 1; }

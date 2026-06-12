@@ -94,3 +94,43 @@ assert_exit_code 2 "$STATUS" "direct active file edit is blocked"
 write_state investigating 3
 STATUS=$(run_hook '{"tool_name":"Grep","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"pattern":"x"}}')
 assert_exit_code 0 "$STATUS" "read-like tools pass during investigation"
+
+# Sentinel forgery: direct Write to a sentinel path is blocked.
+write_state testing 7
+STATUS=$(run_hook '{"tool_name":"Write","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"file_path":"'"$TMPDIR_VDGG"'/.codex/.vdgg-review-sentinel-test-id-0"}}')
+assert_exit_code 2 "$STATUS" "direct sentinel write is blocked"
+
+# Sentinel forgery: Bash heredoc write to a sentinel path is blocked.
+write_state testing 7
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"cat > .codex/.vdgg-review-sentinel-test-id-0 <<EOF\nmodified=0\nEOF"}}')
+assert_exit_code 2 "$STATUS" "bash sentinel forgery is blocked"
+
+# jq missing: build a fakebin that exposes only the tools the fallback path uses.
+# The fallback needs: cat grep sed head git.
+FAKEBIN=$(mktemp -d)
+BASH_BIN="$(command -v bash)"
+for _tool in cat grep sed head git; do
+  ln -s "$(command -v "$_tool")" "$FAKEBIN/$_tool"
+done
+
+# Case A: directory with no .codex/.vdgg-active and not a git repo -> exit 0.
+NO_VDGG_DIR=$(mktemp -d)
+set +e
+printf '%s' '{"tool_name":"Bash","cwd":"'"$NO_VDGG_DIR"'","tool_input":{"command":"echo hi"}}' \
+  | env PATH="$FAKEBIN" "$BASH_BIN" "$PRETOOL" >/dev/null 2>&1
+STATUS=$?
+set -e
+assert_exit_code 0 "$STATUS" "jq missing + inactive session (no .codex/.vdgg-active) does not block"
+
+# Case B: $TMPDIR_VDGG has .codex/.vdgg-active (write_state implementing 6 above
+# left it in place). Not a git repo, so git toplevel resolution leaves cwd as-is,
+# meaning the active file is found at $TMPDIR_VDGG/.codex/.vdgg-active -> exit 2.
+write_state implementing 6
+set +e
+printf '%s' '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"echo hi"}}' \
+  | env PATH="$FAKEBIN" "$BASH_BIN" "$PRETOOL" >/dev/null 2>&1
+STATUS=$?
+set -e
+assert_exit_code 2 "$STATUS" "jq missing + active session fails closed"
+
+rm -rf "$FAKEBIN" "$NO_VDGG_DIR"

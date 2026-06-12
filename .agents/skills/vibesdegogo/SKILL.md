@@ -1,7 +1,7 @@
 ---
 name: vibesdegogo
 description: "Use VibesDeGoGo! for Codex when the user asks Codex to carry coding work through requirements, investigation, planning, implementation, verification, progress reporting, and commit/PR with safety stops."
-version: 0.2.0
+version: 0.3.0
 ---
 
 # VibesDeGoGo! for Codex
@@ -24,6 +24,7 @@ Do not use it for wording-only requests, open-ended discussion, or brainstorming
 - Hook commands should call the installed skill path, normally `$HOME/.agents/skills/vibesdegogo`, or set `VDGG_CODEX_SKILL_DIR` to an absolute skill directory. Do not assume the target project contains `.agents/skills/vibesdegogo`.
 - Codex hook coverage is a guardrail, not a complete enforcement boundary. When unsure, stop before risky work.
 - Codex does not have the exact Claude Code `simplify` gate. Use the Codex review gate in this skill instead: after verification, run a focused simplification/review pass yourself, record it with `vdgg_state_mark_reviewed`, then advance to `verified`.
+- After a failed Bash command, the next command you issue must contain `[Error Acknowledged]` in its text before anything else runs (the pretool error gate). If the hook blocks you, include that marker in your next command text to clear the gate before continuing.
 - Each implementation loop must use a task allowlist and task gate: `vdgg_task_begin` records the allowed files and baseline, `vdgg_task_gate` must pass before `verified`, and `vdgg_task_rollback` reverts the current task when the gate fails.
 
 Use this resolver inside every shell command that calls state helpers:
@@ -225,6 +226,32 @@ source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_mark_reviewed
 ```
 
+Alternatively, use `vdgg_review_run` to run a dedicated external review command and mark the gate in one step. It runs `REVIEW_COMMAND` from `.vdgg-target` (or an explicit command) and writes the review sentinel only when the command exits 0; a non-zero exit propagates without writing the sentinel. Prefer a different vendor than the implementing model for the reviewer. The reviewer must be read-only: findings only, no edits.
+
+```bash
+# With an explicit command:
+vdgg_review_run codex exec --sandbox read-only 'review the diff; exit 1 on blocking findings'
+
+# Using REVIEW_COMMAND from .vdgg-target (no args):
+vdgg_review_run
+```
+
+Relevant `.vdgg-target` keys for Step 7 and step delegation:
+
+```bash
+# External review command. Must exit 0 to pass. Use a different vendor.
+REVIEW_COMMAND="codex exec --sandbox read-only '...'"
+
+# Optional delegated step executors. When set, run the command for that step
+# instead of working inline, then validate the output artifacts (file exists +
+# required headings) before advancing.
+STEP3_EXECUTOR_COMMAND=""
+STEP4_EXECUTOR_COMMAND=""
+STEP6_EXECUTOR_COMMAND=""
+```
+
+Step 6 delegation stays subject to the task allowlist and `vdgg_task_gate`; out-of-allowlist edits by the executor are caught at the gate.
+
 Finally advance:
 
 ```bash
@@ -238,7 +265,7 @@ vdgg_state_advance 7 verified
 
 The pretool hook blocks `verified` until both `vdgg_task_gate` and `vdgg_state_mark_reviewed` have succeeded.
 
-If verification fails, run `vdgg_task_rollback`, go to reflection, select exactly one revised hypothesis, and retry. If review changes implementation files, go to reflection and retest.
+If verification fails, run `vdgg_task_rollback`, go to reflection, select exactly one revised hypothesis, and retry. If review changes implementation files, go to reflection and retest. If `vdgg_task_rollback` refuses because files outside the allowlist changed, resolve those manually (`git status` + `git checkout -- <file>`) and rerun it.
 
 ## Step 6-R: Reflection
 

@@ -5,6 +5,13 @@ It keeps the agent moving through requirements, investigation, planning,
 implementation, verification, review, and commit, while stopping before
 constraint violations.
 
+The hooks are a guardrail, not a sandbox: they mechanically block the common
+drift paths (out-of-scope edits, skipped verification and review, silent
+stops), and the task gate cross-checks actual file changes against the
+declared allowlist. Because Codex documents `PreToolUse` as a guardrail rather
+than a complete enforcement boundary, treat them as safety rails plus an audit
+trail, not as proof of correctness.
+
 ## Core Flow
 
 1. Agree on Goal / Constraints / Acceptance criteria.
@@ -16,6 +23,8 @@ constraint violations.
 7. Run a focused simplification/review pass.
 8. Update progress and ask for validation when needed.
 9. Commit and create a PR for the default `branch-pr` workflow.
+   (A PR is GitHub's confirmation page for a proposed change: nothing lands
+   on the main code until you approve the merge.)
 
 ## Layout
 
@@ -27,6 +36,7 @@ constraint violations.
     vdgg-hook-pretool.sh
     vdgg-hook-posttool.sh
     vdgg-hook-stop.sh
+    vdgg-hook-userprompt.sh
   references/
     codex-setup.md
 .codex/hooks.json

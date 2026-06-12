@@ -91,3 +91,155 @@ vdgg_state_clear >/tmp/vdgg-test-codex-clear.out 2>/tmp/vdgg-test-codex-clear.er
 assert_file_not_exists ".codex/.vdgg-active" "Codex clear removes active file"
 assert_file_not_exists ".codex/.vdgg-state-${ID}" "Codex clear removes state file"
 assert_file_not_exists ".codex/.vdgg-review-sentinel-${ID}-1" "Codex clear removes review sentinels"
+
+# Parity: 8 -> 5 resets loop_count and clears the previous task's scope.
+vdgg_state_init >/tmp/vdgg-test-codex-initb.out 2>/tmp/vdgg-test-codex-initb.err
+IDB=$(vdgg_get_id)
+vdgg_state_advance 2 requirements >/dev/null 2>&1
+vdgg_state_advance 3 investigating >/dev/null 2>&1
+vdgg_state_advance 4 planning >/dev/null 2>&1
+vdgg_state_advance 5 task-selected >/dev/null 2>&1
+vdgg_task_begin "TB: scope probe" functions/index.js >/dev/null 2>&1
+vdgg_state_advance 6 implementing >/dev/null 2>&1
+vdgg_state_loop 6 implementing >/dev/null 2>&1
+vdgg_state_advance 7 testing >/dev/null 2>&1
+vdgg_state_advance 8 progress >/dev/null 2>&1
+vdgg_state_advance 5 task-selected >/dev/null 2>&1
+LOOP_COUNT=$(grep '^loop_count=' ".codex/.vdgg-state-${IDB}" | cut -d= -f2)
+assert_eq "0" "$LOOP_COUNT" "Codex 8 to 5 resets loop_count"
+ALLOW_FIELD=$(grep '^task_allowlist_file=' ".codex/.vdgg-state-${IDB}" | cut -d= -f2-)
+assert_eq "" "$ALLOW_FIELD" "Codex 8 to 5 clears task allowlist field"
+BASE_FIELD=$(grep '^task_base_ref=' ".codex/.vdgg-state-${IDB}" | cut -d= -f2-)
+assert_eq "" "$BASE_FIELD" "Codex 8 to 5 clears task baseline field"
+
+# Task notes are exempt from changed-files (and therefore from the allowlist).
+mkdir -p "tasks/vdgg/${IDB}"
+printf 'note\n' > "tasks/vdgg/${IDB}/progress.md"
+CHANGED=$(vdgg_task_changed_files)
+NOTES_HIT=$(printf '%s\n' "$CHANGED" | grep -c '^tasks/vdgg/' || true)
+assert_eq "0" "$NOTES_HIT" "Codex changed-files exempts task notes"
+rm -rf tasks
+vdgg_state_clear >/dev/null 2>&1
+
+# zsh regression: `local path` would empty $PATH when sourced into zsh.
+if command -v zsh >/dev/null 2>&1; then
+    zsh -c "cd '$TMPDIR_VDGG' && export VDGG_CWD='$TMPDIR_VDGG' && source '$ROOT/.agents/skills/vibesdegogo/scripts/vdgg-state.sh' && vdgg_state_init && vdgg_state_advance 2 requirements && vdgg_state_advance 3 investigating && vdgg_state_advance 4 planning && vdgg_state_advance 5 task-selected && vdgg_task_begin 'TZ: zsh probe' functions/index.js" >/tmp/vdgg-test-codex-zsh.out 2>/tmp/vdgg-test-codex-zsh.err
+    ZSH_RC=$?
+    assert_exit_code 0 "$ZSH_RC" "Codex helpers work when sourced into zsh"
+    IDZ=$(cat .codex/.vdgg-active)
+    assert_file_exists ".codex/.vdgg-task-allowlist-${IDZ}-0" "zsh vdgg_task_begin creates allowlist"
+    vdgg_state_clear >/dev/null 2>&1
+fi
+
+# vdgg_review_run: success writes the review sentinel, failure does not.
+vdgg_state_init >/tmp/vdgg-test-codex-review-init.out 2>/tmp/vdgg-test-codex-review-init.err
+IDR=$(vdgg_get_id)
+vdgg_review_run false >/tmp/vdgg-test-codex-review-false.out 2>/tmp/vdgg-test-codex-review-false.err
+REVIEW_FAIL_RC=$?
+assert_exit_code 1 "$REVIEW_FAIL_RC" "Codex review_run propagates failing review exit code"
+assert_file_not_exists ".codex/.vdgg-review-sentinel-${IDR}-0" "Codex failing review writes no sentinel"
+
+vdgg_review_run true >/tmp/vdgg-test-codex-review-true.out 2>/tmp/vdgg-test-codex-review-true.err
+REVIEW_PASS_RC=$?
+assert_exit_code 0 "$REVIEW_PASS_RC" "Codex review_run succeeds with passing review"
+assert_file_exists ".codex/.vdgg-review-sentinel-${IDR}-0" "Codex passing review writes sentinel"
+
+# vdgg_review_run with REVIEW_COMMAND from .vdgg-target.
+rm -f ".codex/.vdgg-review-sentinel-${IDR}-0"
+printf 'REVIEW_COMMAND="true"\n' > .vdgg-target
+vdgg_review_run >/tmp/vdgg-test-codex-review-target.out 2>/tmp/vdgg-test-codex-review-target.err
+REVIEW_TARGET_RC=$?
+assert_exit_code 0 "$REVIEW_TARGET_RC" "Codex review_run uses REVIEW_COMMAND from .vdgg-target"
+assert_file_exists ".codex/.vdgg-review-sentinel-${IDR}-0" "Codex target-config review writes sentinel"
+rm -f .vdgg-target
+
+vdgg_state_clear >/dev/null 2>&1
+
+# _vdgg_ensure_gitignore: appends marker once; idempotent on second call.
+printf '# existing\n' > .gitignore
+vdgg_state_init >/tmp/vdgg-test-codex-gitignore-init.out 2>/tmp/vdgg-test-codex-gitignore-init.err
+IDG=$(vdgg_get_id)
+MARKER_COUNT=$(grep -c '# Codex / VibesDeGoGo!' .gitignore || true)
+assert_eq "1" "$MARKER_COUNT" "Codex ensure_gitignore appends marker exactly once"
+PATTERN_COUNT=$(grep -c '\.codex/\.vdgg-\*' .gitignore || true)
+assert_eq "1" "$PATTERN_COUNT" "Codex ensure_gitignore appends .codex/.vdgg-* pattern"
+
+# Second init would fail (session active); call the function directly to check idempotency.
+_vdgg_ensure_gitignore >/dev/null 2>&1
+MARKER_COUNT2=$(grep -c '# Codex / VibesDeGoGo!' .gitignore || true)
+assert_eq "1" "$MARKER_COUNT2" "Codex ensure_gitignore is idempotent (marker appears exactly once)"
+
+vdgg_state_clear >/dev/null 2>&1
+rm -f .gitignore
+
+# Changed-files scoping: OTHER session task notes ARE visible; ACTIVE session task notes are NOT.
+vdgg_state_init >/dev/null 2>&1
+IDSCOPE=$(vdgg_get_id)
+vdgg_state_advance 2 requirements >/dev/null 2>&1
+vdgg_state_advance 3 investigating >/dev/null 2>&1
+vdgg_state_advance 4 planning >/dev/null 2>&1
+vdgg_state_advance 5 task-selected >/dev/null 2>&1
+vdgg_task_begin "TS: scope test" functions/index.js >/dev/null 2>&1
+# File under the ACTIVE session id — must be excluded.
+mkdir -p "tasks/vdgg/${IDSCOPE}"
+printf 'active note\n' > "tasks/vdgg/${IDSCOPE}/progress.md"
+# File under a DIFFERENT (simulated) session id — must be included.
+OTHER_ID="99991231-2359-ffff"
+mkdir -p "tasks/vdgg/${OTHER_ID}"
+printf 'other note\n' > "tasks/vdgg/${OTHER_ID}/progress.md"
+CHANGED_SCOPE=$(vdgg_task_changed_files)
+ACTIVE_HIT=$(printf '%s\n' "$CHANGED_SCOPE" | grep -c "^tasks/vdgg/${IDSCOPE}/" || true)
+assert_eq "0" "$ACTIVE_HIT" "Codex changed-files does NOT list ACTIVE session task dir"
+OTHER_HIT=$(printf '%s\n' "$CHANGED_SCOPE" | grep -c "^tasks/vdgg/${OTHER_ID}/" || true)
+assert_eq "1" "$OTHER_HIT" "Codex changed-files DOES list OTHER session task dir"
+rm -rf tasks
+vdgg_state_clear >/dev/null 2>&1
+
+# review_run guard: missing REVIEW_COMMAND in .vdgg-target must not kill a strict shell.
+printf 'WORKFLOW=branch-pr\n' > .vdgg-target
+REVIEW_ERR_FILE=$(mktemp)
+bash -c "set -euo pipefail; export VDGG_CWD='${TMPDIR_VDGG}'; source '${ROOT}/.agents/skills/vibesdegogo/scripts/vdgg-state.sh'; vdgg_review_run" \
+  >/dev/null 2>"$REVIEW_ERR_FILE"
+REVIEW_GUARD_RC=$?
+assert_exit_code 1 "$REVIEW_GUARD_RC" "Codex review_run absent REVIEW_COMMAND exits 1 under set -euo pipefail"
+REVIEW_GUARD_ERR=$(cat "$REVIEW_ERR_FILE")
+assert_contains "$REVIEW_GUARD_ERR" "no command given" "Codex review_run absent REVIEW_COMMAND prints no-command message"
+rm -f "$REVIEW_ERR_FILE" .vdgg-target
+
+# allowlist survives vdgg_state_loop increment (loop counter advances but path stays valid).
+vdgg_state_init >/tmp/vdgg-test-codex-loop-survival-init.out 2>/tmp/vdgg-test-codex-loop-survival-init.err
+IDLS=$(vdgg_get_id)
+vdgg_state_advance 2 requirements >/dev/null 2>&1
+vdgg_state_advance 3 investigating >/dev/null 2>&1
+vdgg_state_advance 4 planning >/dev/null 2>&1
+vdgg_state_advance 5 task-selected >/dev/null 2>&1
+vdgg_task_begin "TL: loop survival" functions/index.js >/tmp/vdgg-test-codex-loop-survival-begin.out 2>/tmp/vdgg-test-codex-loop-survival-begin.err
+vdgg_state_advance 6 implementing >/dev/null 2>&1
+vdgg_state_loop 6 implementing >/tmp/vdgg-test-codex-loop-survival-loop.out 2>/tmp/vdgg-test-codex-loop-survival-loop.err
+printf 'loop survival change\n' > functions/index.js
+vdgg_task_check_allowlist >/tmp/vdgg-test-codex-loop-survival-check.out 2>/tmp/vdgg-test-codex-loop-survival-check.err
+LOOP_ALLOW_RC=$?
+assert_exit_code 0 "$LOOP_ALLOW_RC" "Codex task allowlist passes after vdgg_state_loop increment"
+vdgg_task_gate true >/tmp/vdgg-test-codex-loop-survival-gate.out 2>/tmp/vdgg-test-codex-loop-survival-gate.err
+LOOP_GATE_RC=$?
+assert_exit_code 0 "$LOOP_GATE_RC" "Codex task gate passes after vdgg_state_loop increment"
+git -C . checkout -- functions/index.js
+vdgg_state_clear >/dev/null 2>&1
+
+# rollback survives vdgg_state_loop increment (baseline_dir derived from task_base_ref).
+vdgg_state_init >/tmp/vdgg-test-codex-rb-survival-init.out 2>/tmp/vdgg-test-codex-rb-survival-init.err
+IDRB=$(vdgg_get_id)
+vdgg_state_advance 2 requirements >/dev/null 2>&1
+vdgg_state_advance 3 investigating >/dev/null 2>&1
+vdgg_state_advance 4 planning >/dev/null 2>&1
+vdgg_state_advance 5 task-selected >/dev/null 2>&1
+vdgg_task_begin "TR: rollback survival" functions/index.js >/tmp/vdgg-test-codex-rb-survival-begin.out 2>/tmp/vdgg-test-codex-rb-survival-begin.err
+vdgg_state_advance 6 implementing >/dev/null 2>&1
+vdgg_state_loop 6 implementing >/tmp/vdgg-test-codex-rb-survival-loop.out 2>/tmp/vdgg-test-codex-rb-survival-loop.err
+printf 'broken\n' > functions/index.js
+vdgg_task_rollback >/tmp/vdgg-test-codex-rb-survival-rollback.out 2>/tmp/vdgg-test-codex-rb-survival-rollback.err
+RB_SURVIVAL_RC=$?
+assert_exit_code 0 "$RB_SURVIVAL_RC" "Codex task rollback succeeds after vdgg_state_loop increment"
+RB_SURVIVAL_CONTENT=$(cat functions/index.js)
+assert_eq "baseline" "$RB_SURVIVAL_CONTENT" "Codex task rollback restores file after vdgg_state_loop increment"
+vdgg_state_clear >/dev/null 2>&1

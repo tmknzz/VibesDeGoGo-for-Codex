@@ -4,7 +4,20 @@ set -euo pipefail
 INPUT=$(cat)
 
 if ! command -v jq >/dev/null 2>&1; then
-  # Allow the current command through if it is itself an attempt to install jq.
+  # Best-effort cwd extraction without jq: parse the "cwd" field with grep/sed.
+  FALLBACK_CWD=$(printf '%s' "$INPUT" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"$/\1/')
+  FALLBACK_CWD="${FALLBACK_CWD:-$PWD}"
+  # Resolve to the git toplevel the same way the jq path does.
+  if R=$(git -C "$FALLBACK_CWD" rev-parse --show-toplevel 2>/dev/null); then
+    FALLBACK_CWD="$R"
+  fi
+  # Fail-open when inactive: no active session means nothing to protect, so stay
+  # out of the way rather than blocking every tool in unrelated repositories.
+  if [ ! -f "$FALLBACK_CWD/.codex/.vdgg-active" ]; then
+    exit 0
+  fi
+  # Active session: cannot parse JSON properly, so fail closed. Allow jq-install
+  # commands through so the user can fix the missing dependency.
   if printf '%s' "$INPUT" | grep -qE '"command"[[:space:]]*:[[:space:]]*"[^"]*(brew[[:space:]]+(install|reinstall)|apt(-get)?[[:space:]]+install|apk[[:space:]]+add|dnf[[:space:]]+install|yum[[:space:]]+install|pacman[[:space:]]+-S)[[:space:]]+[^"]*jq'; then
     exit 0
   fi
@@ -84,10 +97,9 @@ path_is_task_allowlisted() {
   grep -qxF "$p" "$TASK_ALLOWLIST_FILE"
 }
 
-path_is_state_file() {
+path_is_sidecar_file() {
   local p="$1"
-  [[ "$p" == *"/.codex/.vdgg-state-"* ]] || [[ "$p" == *"/.codex/.vdgg-active" ]] \
-    || [[ "$p" == ".codex/.vdgg-state-"* ]] || [[ "$p" == ".codex/.vdgg-active" ]]
+  [[ "$p" == *".codex/.vdgg-"* ]]
 }
 
 if [ "$TOOL_NAME" = "Bash" ] && [ -f "$CWD/.codex/.vdgg-error-pending" ]; then
@@ -97,13 +109,13 @@ if [ "$TOOL_NAME" = "Bash" ] && [ -f "$CWD/.codex/.vdgg-error-pending" ]; then
   rm -f "$CWD/.codex/.vdgg-error-pending"
 fi
 
-if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE '(\.codex/\.vdgg-state-|\.codex/\.vdgg-active)'; then
+if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE '\.codex/\.vdgg-'; then
   # `git commit` is exempt: the command text may legitimately mention state-file
   # paths inside the commit message. Commit phase rules apply elsewhere.
   if ! printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
     # `>[^&]` excludes fd-merge redirects (2>&1, >&2) which are not destructive.
     if printf '%s' "$COMMAND" | grep -qE '(>[^&]|tee[[:space:]]|sed[[:space:]]+-i|mv[[:space:]]|cp[[:space:]]|rm[[:space:]])'; then
-      block "Direct state-file edits are blocked. Use vdgg_state_* helpers."
+      block "Direct edits to VibesDeGoGo! sidecar files are blocked. Use vdgg_state_* helpers."
     fi
   fi
 fi
@@ -111,7 +123,7 @@ fi
 if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
   while IFS= read -r file_path; do
     [ -n "$file_path" ] || continue
-    path_is_state_file "$file_path" && block "Direct state-file edits are blocked. Use vdgg_state_* helpers."
+    path_is_sidecar_file "$file_path" && block "Direct edits to VibesDeGoGo! sidecar files are blocked. Use vdgg_state_* helpers."
   done < <(changed_files)
 fi
 
@@ -158,10 +170,12 @@ case "$PHASE" in
     ;;
   implementing|testing)
     if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
-      [ -n "${TASK_ALLOWLIST_FILE:-}" ] && [ -f "$TASK_ALLOWLIST_FILE" ] \
-        || block "No active task allowlist. Run vdgg_task_begin before editing implementation files."
       while IFS= read -r file_path; do
         [ -n "$file_path" ] || continue
+        # Task notes under tasks/vdgg/{id}/ stay editable without allowlisting.
+        path_is_tasks_file "$file_path" && continue
+        [ -n "${TASK_ALLOWLIST_FILE:-}" ] && [ -f "$TASK_ALLOWLIST_FILE" ] \
+          || block "No active task allowlist. Run vdgg_task_begin before editing implementation files."
         path_is_task_allowlisted "$file_path" \
           || block "Task allowlist blocks edit: $(normalize_project_path "$file_path")"
       done < <(changed_files)

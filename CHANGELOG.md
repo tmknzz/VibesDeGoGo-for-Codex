@@ -27,6 +27,7 @@
 
 ### Added
 
+- Step 7 now requires at least one falsifying verification check (boundary/error/regression) and scales the check count to the change surface instead of capping at three.
 - Initial Codex-only split from VibesDeGoGo!.
 - Codex skill, hook scripts, project-local hook config, and smoke tests.
 - Global `UserPromptSubmit` hook that makes VDGG the default workflow for

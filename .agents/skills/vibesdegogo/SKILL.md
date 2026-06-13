@@ -197,7 +197,7 @@ Do not run verification commands in this phase.
 
 ## Step 7: Verify And Review
 
-State 1 to 3 concrete verification checks, then run them through `vdgg_task_gate`. Pass the verification command as separate shell words, for example `vdgg_task_gate npm test`, or use `vdgg_task_gate bash -lc 'command with pipes'`.
+State the verification checks you will run, scaled to the change's surface — roughly 1 to 3 for a small, localized change, more when it spans multiple files or touches a contract; do not stop at three if the surface is larger. At least one must be a check that would FAIL if the change were wrong — a boundary, error, or regression case, not only a happy-path confirmation. Then run them through `vdgg_task_gate`. Pass the verification command as separate shell words, for example `vdgg_task_gate npm test`, or use `vdgg_task_gate bash -lc 'command with pipes'`.
 
 ```bash
 # [VibesDeGoGo! Step 7 Start] step=7, phase=testing, loop=0

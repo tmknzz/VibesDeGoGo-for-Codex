@@ -57,6 +57,25 @@ Start Step 1 only after the user clearly accepts the draft.
 
 Do not create or advance `.codex/.vdgg-*` state files, create task files, switch branches, or edit implementation files before Step 0 is accepted. Step 0 happens before state exists, so hooks cannot fully enforce it; the agent must stop itself here.
 
+## Step 0 Mode: Consultation (壁打ち)
+
+When the requirements cannot yet be safely fixed, run Step 0 as a consultation (壁打ち) before drafting Goal / Constraints / Acceptance. Enter this mode when any of these hold: the goal is ambiguous; the work is subjective or creative — docs, naming, copy, design, a handbook, anything an AI can produce where "good" lives in the user's head, not only in code; the change is high-stakes or hard to reverse (public artifacts, contracts); or more than one defensible direction exists. For a clear, mechanical task with one obvious shape, skip this mode and draft the three items directly.
+
+Consultation is a sounding board. It is none of its three failure modes:
+
+- **Not guess-and-go:** do not silently pick one reading and start building.
+- **Not option-dumping:** do not hand over a bare list ("A, B, or C?") and make the user do the thinking.
+- **Not autonomous-finalize:** do not settle a subjective or scope question for the user behind a closed door.
+
+Loop until the WHAT is agreed:
+
+1. Name the decisions the result actually hinges on — real forks, not pseudo-choices. Raise a few at a time; do not flood.
+2. For each, lay out the trade-offs (what each option wins and loses) and give a recommendation with its reasoning. Recommend; do not merely survey.
+3. The user decides or redirects. On every subjective or scope question the user is the decider; the agent supplies the thinking, not the verdict.
+4. For a genuinely split, high-stakes fork, escalate that one point to a deeper, multi-perspective deliberation: run the MAGI skill if it is installed; if not, get a second opinion another way (a different model, or a structured review). Bring the output back as material — still for the user to decide.
+
+Do not relitigate a settled point, and do not stall: drive toward convergence. When the WHAT is agreed, leave consultation mode and write `requirements.md`. For subjective artifacts, record in Acceptance what "good" was agreed to mean, so completion stays checkable. Then proceed to Step 1.
+
 ## Step 1: Formation
 
 ```bash
@@ -235,6 +254,8 @@ vdgg_review_run codex exec --sandbox read-only 'review the diff; exit 1 on block
 # Using REVIEW_COMMAND from .vdgg-target (no args):
 vdgg_review_run
 ```
+
+For a **subjective artifact** (docs, copy, naming, design — where quality is a judgment, not something a test can decide), this review pass can be the `MAGI` skill when it is installed: run MAGI as the review and `vdgg_state_mark_reviewed` only when MAGI passes. If MAGI is not installed, do the focused review yourself as above. MAGI judges desirability, not code correctness — correctness still rides on tests and your review.
 
 Relevant `.vdgg-target` keys for Step 7 and step delegation:
 

@@ -1,21 +1,15 @@
 # VibesDeGoGo! for Codex
 
-**Keep Codex's momentum. Drop the wreckage.**
-
-Codex is fast, and it loves to cross the finish line. That's exactly the danger: it races to "done" on assumptions it never checked, verification it skipped, and scope it quietly drifted past — then hands you a green checkmark over a mess.
-
-VibesDeGoGo! for Codex keeps that drive and lays down rails. It is a state-and-hook workflow that keeps Codex's momentum while stopping the three things that turn a fast finish into a costly one: **unchecked assumptions, skipped verification, and scope drift.**
+A state-and-hook workflow for Codex. It keeps the agent moving through requirements, investigation, implementation, verification, and commit, but stops it before unchecked assumptions, skipped verification, or scope drift.
 
 One asymmetry runs the whole thing:
 
-- **Don't stop to ask permission** — no "can I continue?", it keeps moving.
-- **Do stop before a constraint violation** — a new dependency, touching auth / persistence / billing / security, a destructive op, or drifting out of the agreed scope: it halts and asks first.
+- Don't stop to ask permission — no "can I continue?", it keeps moving.
+- Do stop before a constraint violation — a new dependency, touching auth / persistence / billing / security, a destructive op, or drifting out of the agreed scope: it halts and asks first.
 
-The rules are not a polite request in a prompt — they are enforced by hooks (`PreToolUse` / `PostToolUse` / `Stop`) plus a state file, and a task gate cross-checks the actual file changes against the allowlist you declared. (Honest caveat, kept from day one: Codex documents its hooks as a guardrail, not a complete enforcement boundary — so treat this as strong rails plus an audit trail, not a proof of correctness.)
+The rules are enforced by hooks (`PreToolUse` / `PostToolUse` / `Stop`) plus a state file, not by prompt text, and a task gate cross-checks the actual file changes against the allowlist you declared. The hooks are a guardrail, not a sandbox: Codex documents them as a guardrail rather than a complete enforcement boundary, so treat this as strong rails plus an audit trail, not proof of correctness.
 
-Just bash + jq. No SaaS, no account, no API key, no telemetry. MIT, and free.
-
-> Where this comes from: I don't write code — I have never written or read a line of it. The tools in this repo are real, tested, and open source anyway, because the rails do the reading I can't: every step verified, tests must pass, nothing ships unreviewed. That's the point — VibesDeGoGo! is how someone who can't code keeps a fast agent honest.
+bash + jq. No account, keys, or telemetry. MIT.
 
 ## Core Flow
 
@@ -95,7 +89,3 @@ If you also install **MAGI** (a small open-source 3-persona deliberation skill),
 ## Status
 
 This repository is the Codex-focused edition. The Claude Code edition lives separately at [VibesDeGoGo-for-Claude-Code](https://github.com/tmknzz/VibesDeGoGo-for-Claude-Code).
-
-## Support
-
-It's free, and it stays free. If it ever saves you a weekend, a coffee is welcome — never expected.

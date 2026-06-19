@@ -76,6 +76,37 @@ Loop until the WHAT is agreed:
 
 Do not relitigate a settled point, and do not stall: drive toward convergence. When the WHAT is agreed, leave consultation mode and write `requirements.md`. For subjective artifacts, record in Acceptance what "good" was agreed to mean, so completion stays checkable. Then proceed to Step 1.
 
+## Step 0 Helper: Grill Me (optional)
+
+The Consultation loop above is the baseline for resolving ambiguity. Grill Me is an optional third part — a question-driven interrogator that walks the decision tree one branch at a time — that can be slotted in **before** drafting Goal / Constraints / Acceptance, to pre-filter ambiguity through structured waves of questions, each with a recommended answer.
+
+When Grill Me is engaged, Step 0 runs in three layers before drafting:
+
+1. **Shallow consultation** — the baseline loop above raises real forks and gives recommendations.
+2. **Grill Me pass** — sequential question waves drive the user through unresolved branches, each question carrying a recommended answer; the user accepts, redirects, or rejects per question.
+3. **MAGI escalation** — for any remaining genuinely split, high-stakes fork, step 4 of the Consultation loop still applies (run MAGI if installed, else get a second opinion another way).
+
+Then drafting `requirements.md` proceeds as usual.
+
+Grill Me is a pre-filter, not a replacement for MAGI. Skipping Grill Me is safe because MAGI remains the deeper-deliberation backstop for high-stakes forks.
+
+Control via `.vdgg-target`:
+
+```bash
+# Step 0 Grill Me toggle. Grill Me is an optional question-driven
+# interrogator that walks the decision tree one branch at a time and
+# runs before drafting Goal / Constraints / Acceptance.
+#   off  (default) — do not run Grill Me.
+#   on             — always run Grill Me at Step 0.
+#   auto           — run when the Consultation entry conditions hold
+#                    (ambiguous goal, subjective work, high stakes,
+#                    multiple defensible directions).
+# Treated as off if the Grill Me skill is not installed.
+GRILLME=auto
+```
+
+If the Grill Me skill is not installed, the setting is treated as `off` and Step 0 continues with Consultation. The orchestrating agent invokes the installed Grill Me skill directly; there is no shell helper for this (the same convention as MAGI escalation).
+
 ## Step 1: Formation
 
 ```bash

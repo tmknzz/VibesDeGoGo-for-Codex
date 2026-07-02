@@ -28,6 +28,7 @@
 ### Added
 
 - Step 7 now requires at least one falsifying verification check (boundary/error/regression) and scales the check count to the change surface instead of capping at three.
+- REVIEW_COMMAND guidance now recommends a security perspective for publicly shipped code, with an updated example; simplify explicitly does not cover security.
 - Initial Codex-only split from VibesDeGoGo!.
 - Codex skill, hook scripts, project-local hook config, and smoke tests.
 - Global `UserPromptSubmit` hook that makes VDGG the default workflow for

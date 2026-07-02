@@ -245,7 +245,7 @@ source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_mark_reviewed
 ```
 
-Alternatively, use `vdgg_review_run` to run a dedicated external review command and mark the gate in one step. It runs `REVIEW_COMMAND` from `.vdgg-target` (or an explicit command) and writes the review sentinel only when the command exits 0; a non-zero exit propagates without writing the sentinel. Prefer a different vendor than the implementing model for the reviewer. The reviewer must be read-only: findings only, no edits.
+Alternatively, use `vdgg_review_run` to run a dedicated external review command and mark the gate in one step. It runs `REVIEW_COMMAND` from `.vdgg-target` (or an explicit command) and writes the review sentinel only when the command exits 0; a non-zero exit propagates without writing the sentinel. Prefer a different vendor than the implementing model for the reviewer. The reviewer must be read-only: findings only, no edits. For code that ships to other machines or handles user data, the review prompt must include a security perspective (injection, secrets exposure, unsafe file/network/exec operations) — the simplify gate does not cover security.
 
 ```bash
 # With an explicit command:
@@ -261,7 +261,7 @@ Relevant `.vdgg-target` keys for Step 7 and step delegation:
 
 ```bash
 # External review command. Must exit 0 to pass. Use a different vendor.
-REVIEW_COMMAND="codex exec --sandbox read-only '...'"
+REVIEW_COMMAND="claude -p 'review the working tree diff for correctness and security (injection, secrets exposure, unsafe file/network/exec operations, data loss); exit non-zero on blocking findings'"
 
 # Optional delegated step executors. When set, run the command for that step
 # instead of working inline, then validate the output artifacts (file exists +

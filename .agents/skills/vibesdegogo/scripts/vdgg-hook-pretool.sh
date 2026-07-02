@@ -99,7 +99,7 @@ path_is_task_allowlisted() {
 
 path_is_sidecar_file() {
   local p="$1"
-  [[ "$p" == *".codex/.vdgg-"* ]]
+  [[ "$p" == *".codex/.vdgg-"* ]] || [[ "$p" == *".vdgg-target" ]]
 }
 
 if [ "$TOOL_NAME" = "Bash" ] && [ -f "$CWD/.codex/.vdgg-error-pending" ]; then
@@ -109,15 +109,42 @@ if [ "$TOOL_NAME" = "Bash" ] && [ -f "$CWD/.codex/.vdgg-error-pending" ]; then
   rm -f "$CWD/.codex/.vdgg-error-pending"
 fi
 
-if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE '\.codex/\.vdgg-'; then
-  # `git commit` is exempt: the command text may legitimately mention state-file
-  # paths inside the commit message. Commit phase rules apply elsewhere.
-  if ! printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
-    # `>[^&]` excludes fd-merge redirects (2>&1, >&2) which are not destructive.
-    if printf '%s' "$COMMAND" | grep -qE '(>[^&]|tee[[:space:]]|sed[[:space:]]+-i|mv[[:space:]]|cp[[:space:]]|rm[[:space:]])'; then
-      block "Direct edits to VibesDeGoGo! sidecar files are blocked. Use vdgg_state_* helpers."
+if [ "$TOOL_NAME" = "Bash" ]; then
+  # Sidecar files (.codex/.vdgg-*) may only be written through vdgg_state_*
+  # helpers, and .vdgg-target only by a human (it holds executed config:
+  # REVIEW_COMMAND, STEP*_EXECUTOR_COMMAND). Split the command into shell
+  # segments so a `git commit` segment (whose message may mention such a path)
+  # cannot shield a mutating segment in the same line, e.g.
+  #   git commit -m x && rm -f .codex/.vdgg-active
+  # Whitelist model (fail-closed): a segment mentioning a protected path is
+  # allowed only when it is a git-commit segment or a genuine read (leading
+  # read-only verb, no output redirection / tee). Everything else (python/perl,
+  # dd/install, redirects, file ops) is denied. Known limit: a path hidden
+  # behind a shell variable or command substitution evades the literal match.
+  _vdgg_segs="$COMMAND"
+  _vdgg_segs="${_vdgg_segs//&&/$'\n'}"
+  _vdgg_segs="${_vdgg_segs//||/$'\n'}"
+  _vdgg_segs="${_vdgg_segs//;/$'\n'}"
+  _vdgg_segs="${_vdgg_segs//|/$'\n'}"
+  while IFS= read -r _vdgg_seg; do
+    case "$_vdgg_seg" in
+      *".codex/.vdgg-"*|*".vdgg-target"*) ;;
+      *) continue ;;
+    esac
+    if printf '%s' "$_vdgg_seg" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
+      continue
     fi
-  fi
+    _vdgg_verb=$(printf '%s' "$_vdgg_seg" | sed -E 's/^[[:space:]]*//; s/[[:space:]].*//')
+    _vdgg_read_ok=0
+    case "$_vdgg_verb" in
+      cat|grep|egrep|fgrep|test|'['|ls|head|tail|wc|diff|cmp|stat|od|hexdump|file|realpath|readlink)
+        if ! printf '%s' "$_vdgg_seg" | grep -qE '(>[^&]|>>|(^|[[:space:]])tee([[:space:]]|$))'; then
+          _vdgg_read_ok=1
+        fi
+        ;;
+    esac
+    [ "$_vdgg_read_ok" -eq 1 ] || block "Direct writes to VibesDeGoGo! sidecar/target files are blocked. Use vdgg_state_* helpers; .vdgg-target must be set by a human."
+  done <<< "$_vdgg_segs"
 fi
 
 if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then

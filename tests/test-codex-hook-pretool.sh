@@ -105,6 +105,26 @@ write_state testing 7
 STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"cat > .codex/.vdgg-review-sentinel-test-id-0 <<EOF\nmodified=0\nEOF"}}')
 assert_exit_code 2 "$STATUS" "bash sentinel forgery is blocked"
 
+# P1-Both-2: a git commit segment must not shield a sidecar-mutating segment.
+write_state commit 9
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"git commit -m x && rm -f .codex/.vdgg-active"}}')
+assert_exit_code 2 "$STATUS" "git commit does not shield sidecar deletion"
+
+# P1-CC-1: interpreter/tool-based sentinel forgery is blocked.
+write_state testing 7
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"dd of=.codex/.vdgg-review-sentinel-test-id-0"}}')
+assert_exit_code 2 "$STATUS" "dd sentinel forgery is blocked"
+
+# P0-2: .vdgg-target is write-protected (agent cannot self-author REVIEW_COMMAND).
+write_state implementing 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"echo REVIEW_COMMAND=true > .vdgg-target"}}')
+assert_exit_code 2 "$STATUS" "bash write to .vdgg-target is blocked"
+
+# Regression: a genuine sidecar read stays allowed.
+write_state investigating 3
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"cat .codex/.vdgg-state-test-id"}}')
+assert_exit_code 0 "$STATUS" "genuine sidecar read is allowed"
+
 # jq missing: build a fakebin that exposes only the tools the fallback path uses.
 # The fallback needs: cat grep sed head git.
 FAKEBIN=$(mktemp -d)

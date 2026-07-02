@@ -99,7 +99,16 @@ Branch name is derived from the Step 0 Goal, not from the VibesDeGoGo! id. Pick 
 ```bash
 WORKFLOW=branch-pr
 BASE_BRANCH=""
-if [ -f .vdgg-target ]; then source .vdgg-target; fi
+# Never `source` .vdgg-target: it is a repository-controlled file, and sourcing
+# it would execute any code an untrusted repo places there. Read only the needed
+# keys and validate them.
+if [ -f .vdgg-target ]; then
+  WORKFLOW=$(grep -m1 '^WORKFLOW=' .vdgg-target | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/')
+  BASE_BRANCH=$(grep -m1 '^BASE_BRANCH=' .vdgg-target | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/')
+  case "$WORKFLOW" in trunk|branch-pr) ;; *) WORKFLOW=branch-pr ;; esac
+  case "$BASE_BRANCH" in ''|*[!A-Za-z0-9._/-]*) BASE_BRANCH="" ;; esac
+fi
+WORKFLOW=${WORKFLOW:-branch-pr}
 if [ "${WORKFLOW:-branch-pr}" != "trunk" ]; then
   if [ -z "${BASE_BRANCH:-}" ]; then
     BASE_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')

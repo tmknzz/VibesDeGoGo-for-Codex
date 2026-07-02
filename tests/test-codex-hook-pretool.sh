@@ -140,6 +140,16 @@ write_state testing 7
 STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"# [VibesDeGoGo! Step 6 Start] step=6, phase=implementing, loop=0\nvdgg_state_loop 6 implementing"}}')
 assert_exit_code 2 "$STATUS" "testing cannot return to implementing directly"
 
+# P1-CX-2 (partial): reflection cannot jump straight to verified.
+write_state reflection 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"# [VibesDeGoGo! Step 7 Start] step=7, phase=verified, loop=0\nvdgg_state_advance 7 verified"}}')
+assert_exit_code 2 "$STATUS" "reflection cannot jump to verified"
+
+# P1-CX-4: branch-pr forbids pushing the base branch during commit.
+write_state commit 9
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"git push origin main"}}')
+assert_exit_code 2 "$STATUS" "branch-pr blocks pushing base branch"
+
 # jq missing: build a fakebin that exposes only the tools the fallback path uses.
 # The fallback needs: cat grep sed head git.
 FAKEBIN=$(mktemp -d)

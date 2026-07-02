@@ -238,6 +238,10 @@ case "$PHASE" in
         esac
       done < <(changed_files)
     fi
+    # verified is only reachable from testing after review, never from reflection.
+    if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(advance|loop|write)[[:space:]]+[0-9]+[[:space:]]+verified'; then
+      block "verified is only reachable from testing after review, not from reflection."
+    fi
     ;;
   verified|progress|commit)
     if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
@@ -253,6 +257,32 @@ case "$PHASE" in
         fi
         block "No code edits after verification; only progress and configured version files may be edited in phase ${PHASE}."
       done < <(changed_files)
+    fi
+    # branch-pr workflow forbids committing or pushing directly on the base branch.
+    if [ "$TOOL_NAME" = "Bash" ] && [ "$PHASE" = "commit" ]; then
+      WF=branch-pr; BB=""
+      if [ -f "$CWD/.vdgg-target" ]; then
+        WF=$( { grep -E '^WORKFLOW=' "$CWD/.vdgg-target" 2>/dev/null || true; } | tail -1 | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
+        BB=$( { grep -E '^BASE_BRANCH=' "$CWD/.vdgg-target" 2>/dev/null || true; } | tail -1 | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
+        case "$WF" in trunk|branch-pr) ;; *) WF=branch-pr ;; esac
+      fi
+      if [ "$WF" != "trunk" ]; then
+        if [ -z "$BB" ]; then
+          BB=$(git -C "$CWD" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+          BB=${BB#origin/}; BB=${BB:-main}
+        fi
+        CURBR=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        BB_RE=$(printf '%s' "$BB" | sed 's/[^[:alnum:]]/\\&/g')
+        if printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+(commit|push)([[:space:]]|$)'; then
+          if [ "$CURBR" = "$BB" ]; then
+            block "branch-pr workflow requires committing/pushing a feature branch and opening a PR, not the base branch."
+          fi
+          if printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+push' \
+            && printf '%s' "$COMMAND" | grep -qE "(^|[^a-zA-Z0-9_/.-])${BB_RE}([^a-zA-Z0-9_/.-]|\$)"; then
+            block "branch-pr workflow: do not push the base branch."
+          fi
+        fi
+      fi
     fi
     ;;
   *)

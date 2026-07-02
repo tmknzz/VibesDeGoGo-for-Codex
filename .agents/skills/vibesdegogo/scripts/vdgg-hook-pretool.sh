@@ -99,7 +99,7 @@ path_is_task_allowlisted() {
 
 path_is_sidecar_file() {
   local p="$1"
-  [[ "$p" == *".codex/.vdgg-"* ]]
+  [[ "$p" == *".codex/.vdgg-"* ]] || [[ "$p" == *".vdgg-target" ]]
 }
 
 if [ "$TOOL_NAME" = "Bash" ] && [ -f "$CWD/.codex/.vdgg-error-pending" ]; then
@@ -109,15 +109,42 @@ if [ "$TOOL_NAME" = "Bash" ] && [ -f "$CWD/.codex/.vdgg-error-pending" ]; then
   rm -f "$CWD/.codex/.vdgg-error-pending"
 fi
 
-if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE '\.codex/\.vdgg-'; then
-  # `git commit` is exempt: the command text may legitimately mention state-file
-  # paths inside the commit message. Commit phase rules apply elsewhere.
-  if ! printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
-    # `>[^&]` excludes fd-merge redirects (2>&1, >&2) which are not destructive.
-    if printf '%s' "$COMMAND" | grep -qE '(>[^&]|tee[[:space:]]|sed[[:space:]]+-i|mv[[:space:]]|cp[[:space:]]|rm[[:space:]])'; then
-      block "Direct edits to VibesDeGoGo! sidecar files are blocked. Use vdgg_state_* helpers."
+if [ "$TOOL_NAME" = "Bash" ]; then
+  # Sidecar files (.codex/.vdgg-*) may only be written through vdgg_state_*
+  # helpers, and .vdgg-target only by a human (it holds executed config:
+  # REVIEW_COMMAND, STEP*_EXECUTOR_COMMAND). Split the command into shell
+  # segments so a `git commit` segment (whose message may mention such a path)
+  # cannot shield a mutating segment in the same line, e.g.
+  #   git commit -m x && rm -f .codex/.vdgg-active
+  # Whitelist model (fail-closed): a segment mentioning a protected path is
+  # allowed only when it is a git-commit segment or a genuine read (leading
+  # read-only verb, no output redirection / tee). Everything else (python/perl,
+  # dd/install, redirects, file ops) is denied. Known limit: a path hidden
+  # behind a shell variable or command substitution evades the literal match.
+  _vdgg_segs="$COMMAND"
+  _vdgg_segs="${_vdgg_segs//&&/$'\n'}"
+  _vdgg_segs="${_vdgg_segs//||/$'\n'}"
+  _vdgg_segs="${_vdgg_segs//;/$'\n'}"
+  _vdgg_segs="${_vdgg_segs//|/$'\n'}"
+  while IFS= read -r _vdgg_seg; do
+    case "$_vdgg_seg" in
+      *".codex/.vdgg-"*|*".vdgg-target"*) ;;
+      *) continue ;;
+    esac
+    if printf '%s' "$_vdgg_seg" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
+      continue
     fi
-  fi
+    _vdgg_verb=$(printf '%s' "$_vdgg_seg" | sed -E 's/^[[:space:]]*//; s/[[:space:]].*//')
+    _vdgg_read_ok=0
+    case "$_vdgg_verb" in
+      cat|grep|egrep|fgrep|test|'['|ls|head|tail|wc|diff|cmp|stat|od|hexdump|file|realpath|readlink)
+        if ! printf '%s' "$_vdgg_seg" | grep -qE '(>[^&]|>>|(^|[[:space:]])tee([[:space:]]|$))'; then
+          _vdgg_read_ok=1
+        fi
+        ;;
+    esac
+    [ "$_vdgg_read_ok" -eq 1 ] || block "Direct writes to VibesDeGoGo! sidecar/target files are blocked. Use vdgg_state_* helpers; .vdgg-target must be set by a human."
+  done <<< "$_vdgg_segs"
 fi
 
 if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
@@ -183,6 +210,11 @@ case "$PHASE" in
     if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
       block "Commit is blocked before Step 9."
     fi
+    # A failed test must go through reflection before more implementation.
+    if [ "$TOOL_NAME" = "Bash" ] && [ "$PHASE" = "testing" ] \
+      && printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(loop|advance|write)[[:space:]]+[0-9]+[[:space:]]+implementing'; then
+      block "A failed test must go through reflection (Step 6-R) before returning to implementing."
+    fi
     if [ "$TOOL_NAME" = "Bash" ] && [ "$PHASE" = "testing" ]; then
       if printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(advance|loop|write)[[:space:]]+[0-9]+[[:space:]]+verified'; then
         if [ -n "${TASK_ALLOWLIST_FILE:-}" ] && [ -f "$TASK_ALLOWLIST_FILE" ]; then
@@ -206,19 +238,59 @@ case "$PHASE" in
         esac
       done < <(changed_files)
     fi
+    # verified is only reachable from testing after review, never from reflection.
+    if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(advance|loop|write)[[:space:]]+[0-9]+[[:space:]]+verified'; then
+      block "verified is only reachable from testing after review, not from reflection."
+    fi
     ;;
-  progress|commit)
+  verified|progress|commit)
     if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
       while IFS= read -r file_path; do
         [ -n "$file_path" ] || continue
         path_is_tasks_file "$file_path" && continue
-        if [ -f "$CWD/.vdgg-target" ]; then
+        # No code edits after verification; configured version files may change
+        # only during progress/commit, never in verified.
+        if [ "$PHASE" != "verified" ] && [ -f "$CWD/.vdgg-target" ]; then
           if grep -E '^VERSION_FILE_[0-9]+_PATH=' "$CWD/.vdgg-target" | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/' | grep -qx "$file_path"; then
             continue
           fi
         fi
-        block "Only progress and configured version files may be edited in phase ${PHASE}."
+        block "No code edits after verification; only progress and configured version files may be edited in phase ${PHASE}."
       done < <(changed_files)
+    fi
+    # branch-pr workflow forbids committing or pushing directly on the base branch.
+    if [ "$TOOL_NAME" = "Bash" ] && [ "$PHASE" = "commit" ]; then
+      WF=branch-pr; BB=""
+      if [ -f "$CWD/.vdgg-target" ]; then
+        WF=$( { grep -E '^WORKFLOW=' "$CWD/.vdgg-target" 2>/dev/null || true; } | tail -1 | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
+        BB=$( { grep -E '^BASE_BRANCH=' "$CWD/.vdgg-target" 2>/dev/null || true; } | tail -1 | sed -E 's/^[^=]*=//; s/^"//; s/"$//')
+        case "$WF" in trunk|branch-pr) ;; *) WF=branch-pr ;; esac
+      fi
+      if [ "$WF" != "trunk" ]; then
+        if [ -z "$BB" ]; then
+          BB=$(git -C "$CWD" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+          BB=${BB#origin/}; BB=${BB:-main}
+        fi
+        CURBR=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        BB_RE=$(printf '%s' "$BB" | sed 's/[^[:alnum:]]/\\&/g')
+        if printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+(commit|push)([[:space:]]|$)'; then
+          if [ "$CURBR" = "$BB" ]; then
+            block "branch-pr workflow requires committing/pushing a feature branch and opening a PR, not the base branch."
+          fi
+          if printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+push' \
+            && printf '%s' "$COMMAND" | grep -qE "(^|[^a-zA-Z0-9_/.-])${BB_RE}([^a-zA-Z0-9_/.-]|\$)"; then
+            block "branch-pr workflow: do not push the base branch."
+          fi
+        fi
+      fi
+    fi
+    ;;
+  *)
+    # Unknown phase: fail closed for mutating tools and Bash. vdgg_state_write
+    # also rejects unknown phases at the source; this is defense in depth against
+    # a crafted state file.
+    if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ] || [ "$TOOL_NAME" = "Bash" ]; then
+      block "Unknown workflow phase '${PHASE}'."
     fi
     ;;
 esac

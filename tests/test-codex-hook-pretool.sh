@@ -105,6 +105,51 @@ write_state testing 7
 STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"cat > .codex/.vdgg-review-sentinel-test-id-0 <<EOF\nmodified=0\nEOF"}}')
 assert_exit_code 2 "$STATUS" "bash sentinel forgery is blocked"
 
+# P1-Both-2: a git commit segment must not shield a sidecar-mutating segment.
+write_state commit 9
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"git commit -m x && rm -f .codex/.vdgg-active"}}')
+assert_exit_code 2 "$STATUS" "git commit does not shield sidecar deletion"
+
+# P1-CC-1: interpreter/tool-based sentinel forgery is blocked.
+write_state testing 7
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"dd of=.codex/.vdgg-review-sentinel-test-id-0"}}')
+assert_exit_code 2 "$STATUS" "dd sentinel forgery is blocked"
+
+# P0-2: .vdgg-target is write-protected (agent cannot self-author REVIEW_COMMAND).
+write_state implementing 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"echo REVIEW_COMMAND=true > .vdgg-target"}}')
+assert_exit_code 2 "$STATUS" "bash write to .vdgg-target is blocked"
+
+# Regression: a genuine sidecar read stays allowed.
+write_state investigating 3
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"cat .codex/.vdgg-state-test-id"}}')
+assert_exit_code 0 "$STATUS" "genuine sidecar read is allowed"
+
+# P1-CX-1: verified phase blocks code edits (arm was missing entirely).
+write_state verified 7
+STATUS=$(run_hook '{"tool_name":"Edit","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"file_path":"'"$TMPDIR_VDGG"'/functions/index.js"}}')
+assert_exit_code 2 "$STATUS" "verified blocks code edits"
+
+# P1-Both-3: an unknown phase fails closed for mutating tools.
+write_state bogusphase 6
+STATUS=$(run_hook '{"tool_name":"Edit","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"file_path":"'"$TMPDIR_VDGG"'/functions/index.js"}}')
+assert_exit_code 2 "$STATUS" "unknown phase fails closed for edits"
+
+# P1-CX-3: testing must go through reflection before returning to implementing.
+write_state testing 7
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"# [VibesDeGoGo! Step 6 Start] step=6, phase=implementing, loop=0\nvdgg_state_loop 6 implementing"}}')
+assert_exit_code 2 "$STATUS" "testing cannot return to implementing directly"
+
+# P1-CX-2 (partial): reflection cannot jump straight to verified.
+write_state reflection 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"# [VibesDeGoGo! Step 7 Start] step=7, phase=verified, loop=0\nvdgg_state_advance 7 verified"}}')
+assert_exit_code 2 "$STATUS" "reflection cannot jump to verified"
+
+# P1-CX-4: branch-pr forbids pushing the base branch during commit.
+write_state commit 9
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"git push origin main"}}')
+assert_exit_code 2 "$STATUS" "branch-pr blocks pushing base branch"
+
 # jq missing: build a fakebin that exposes only the tools the fallback path uses.
 # The fallback needs: cat grep sed head git.
 FAKEBIN=$(mktemp -d)

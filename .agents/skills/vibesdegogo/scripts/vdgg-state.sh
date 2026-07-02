@@ -182,7 +182,10 @@ vdgg_state_write() {
   local state_file current_step id
 
   [[ "$new_step" =~ ^[0-9]+$ ]] || { echo "vdgg-state: invalid step" >&2; return 1; }
-  [[ "$new_phase" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "vdgg-state: invalid phase" >&2; return 1; }
+  case "$new_phase" in
+    declare|requirements|investigating|planning|task-selected|implementing|testing|reflection|verified|progress|commit) ;;
+    *) echo "vdgg-state: invalid phase" >&2; return 1 ;;
+  esac
   [[ "$new_loop_count" =~ ^[0-9]+$ ]] || { echo "vdgg-state: invalid loop" >&2; return 1; }
 
   state_file=$(_vdgg_get_state_file)

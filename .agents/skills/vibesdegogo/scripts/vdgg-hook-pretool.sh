@@ -210,6 +210,11 @@ case "$PHASE" in
     if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
       block "Commit is blocked before Step 9."
     fi
+    # A failed test must go through reflection before more implementation.
+    if [ "$TOOL_NAME" = "Bash" ] && [ "$PHASE" = "testing" ] \
+      && printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(loop|advance|write)[[:space:]]+[0-9]+[[:space:]]+implementing'; then
+      block "A failed test must go through reflection (Step 6-R) before returning to implementing."
+    fi
     if [ "$TOOL_NAME" = "Bash" ] && [ "$PHASE" = "testing" ]; then
       if printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(advance|loop|write)[[:space:]]+[0-9]+[[:space:]]+verified'; then
         if [ -n "${TASK_ALLOWLIST_FILE:-}" ] && [ -f "$TASK_ALLOWLIST_FILE" ]; then
@@ -234,18 +239,28 @@ case "$PHASE" in
       done < <(changed_files)
     fi
     ;;
-  progress|commit)
+  verified|progress|commit)
     if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
       while IFS= read -r file_path; do
         [ -n "$file_path" ] || continue
         path_is_tasks_file "$file_path" && continue
-        if [ -f "$CWD/.vdgg-target" ]; then
+        # No code edits after verification; configured version files may change
+        # only during progress/commit, never in verified.
+        if [ "$PHASE" != "verified" ] && [ -f "$CWD/.vdgg-target" ]; then
           if grep -E '^VERSION_FILE_[0-9]+_PATH=' "$CWD/.vdgg-target" | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/' | grep -qx "$file_path"; then
             continue
           fi
         fi
-        block "Only progress and configured version files may be edited in phase ${PHASE}."
+        block "No code edits after verification; only progress and configured version files may be edited in phase ${PHASE}."
       done < <(changed_files)
+    fi
+    ;;
+  *)
+    # Unknown phase: fail closed for mutating tools and Bash. vdgg_state_write
+    # also rejects unknown phases at the source; this is defense in depth against
+    # a crafted state file.
+    if [ "$TOOL_NAME" = "apply_patch" ] || [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ] || [ "$TOOL_NAME" = "Bash" ]; then
+      block "Unknown workflow phase '${PHASE}'."
     fi
     ;;
 esac

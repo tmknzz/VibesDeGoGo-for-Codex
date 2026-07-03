@@ -94,7 +94,7 @@ Repo-local hooks are useful for developing this repository, but they do not prot
 
 `jq` is required because the hook scripts parse Codex hook JSON.
 
-## Verified upstream behavior
+## Upstream behavior (per Codex docs)
 
 The Codex docs say:
 
@@ -109,6 +109,15 @@ Sources:
 - https://developers.openai.com/codex/hooks
 - https://github.com/openai/codex/releases/tag/rust-v0.124.0
 
-## Known limitation
+## Known limitations
 
 VibesDeGoGo! for Codex follows the Claude Code step model, but hook parity is not exact. The Codex hook docs explicitly warn that `PreToolUse` is a guardrail rather than a complete enforcement boundary. Treat hooks as safety rails, not a sandbox or proof of correctness.
+
+- Scope: hooks are confirmed to fire in the interactive Codex CLI (checked
+  against 0.139.0). In our testing, `codex exec` (non-interactive) did not
+  fire hooks at all, so VDGG enforcement does not apply there.
+- `PostToolUse` payload shape varies by Codex version: some versions deliver
+  `tool_response` as an object with `exit_code`/`stderr`, others (e.g.
+  0.139.0) as a plain string. With the string form there is no exit code, so
+  Bash failure detection falls back to scanning the response text for error
+  patterns — best-effort, not a reliable success/failure signal.

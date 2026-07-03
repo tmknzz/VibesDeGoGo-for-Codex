@@ -294,6 +294,24 @@ vdgg_task_begin() {
 
   id=$(_vdgg_get_active_id)
   [ -n "$id" ] || { echo "vdgg_task_begin: active session not found" >&2; return 1; }
+
+  # Refuse BEFORE any side effect: (re)arming is only legal where a state
+  # write to step 5 is (Step 4/5/8 per _vdgg_check_step_transition). Called
+  # from implementing/reflection it would otherwise clobber the active loop's
+  # allowlist/baseline and then fail the state write anyway, leaving the hook
+  # enforcing a stale (or, same-loop, a deleted) allowlist while still
+  # printing a success message.
+  local current_step state_file
+  state_file=$(_vdgg_state_file_for_id "$id")
+  if [ -f "$state_file" ]; then
+    current_step=$(grep "^step=" "$state_file" | cut -d= -f2)
+    if ! _vdgg_check_step_transition "${current_step:-0}" 5 2>/dev/null; then
+      echo "vdgg_task_begin: blocked — cannot (re)arm a task outside Step 5 (current step=${current_step})." >&2
+      echo "vdgg_task_begin: fit the change to the current allowlist, or take the extra scope as a new task via Step 8 -> Step 5." >&2
+      return 1
+    fi
+  fi
+
   loop=$(_vdgg_task_loop)
   allowlist_file=$(_vdgg_task_allowlist_file_for_id "$id" "$loop")
   baseline_dir=$(_vdgg_task_baseline_dir_for_id "$id" "$loop")
@@ -321,7 +339,15 @@ vdgg_task_begin() {
   git -C "$VDGG_CWD" status --porcelain=v1 --untracked-files=all > "$baseline_status"
 
   # Single state write records the task and both gate fields atomically.
-  vdgg_state_write 5 task-selected "$loop" "$task_title" "$allowlist_file" "$baseline_status"
+  # The transition was pre-checked above, so a failure here is unexpected —
+  # still, never report success on a failed write: roll the side effects back
+  # so no half-armed gate survives.
+  if ! vdgg_state_write 5 task-selected "$loop" "$task_title" "$allowlist_file" "$baseline_status"; then
+    rm -rf "$baseline_dir"
+    rm -f "$allowlist_file" "$gate_file" "$baseline_status"
+    echo "vdgg_task_begin: state write failed; task gate not armed." >&2
+    return 1
+  fi
   echo "vdgg-task: began '${task_title}' with allowlist ${allowlist_file}" >&2
 }
 

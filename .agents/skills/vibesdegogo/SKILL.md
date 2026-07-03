@@ -328,7 +328,7 @@ source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_loop 6 implementing
 ```
 
-If the revised hypothesis changes the file scope, go back to Step 5 and run `vdgg_task_begin` again with a new allowlist before editing.
+If the revised hypothesis needs files outside the current allowlist, do not try to widen the allowlist in place — `vdgg_task_begin` cannot re-arm outside Step 5 (6 -> 5 is not a legal transition) and will fail loudly. Adapt the fix to the current allowlist (e.g. downgrade an optional cleanup to a followup note), or complete/close this task and take the wider scope as a new task via Step 8 -> Step 5.
 
 ## Step 8: Progress And Validation Request
 

@@ -121,6 +121,35 @@ assert_eq "0" "$NOTES_HIT" "Codex changed-files exempts task notes"
 rm -rf tasks
 vdgg_state_clear >/dev/null 2>&1
 
+# Re-arm guard: vdgg_task_begin is rejected outside Step 5 (e.g. implementing)
+# BEFORE any side effect — the active allowlist/baseline must survive intact —
+# and re-arming with a wider allowlist works via the legal 8 -> 5 route.
+vdgg_state_init >/tmp/vdgg-test-codex-rearm-init.out 2>/tmp/vdgg-test-codex-rearm-init.err
+IDRA=$(vdgg_get_id)
+vdgg_state_advance 2 requirements >/dev/null 2>&1
+vdgg_state_advance 3 investigating >/dev/null 2>&1
+vdgg_state_advance 4 planning >/dev/null 2>&1
+vdgg_state_advance 5 task-selected >/dev/null 2>&1
+vdgg_task_begin "TA: rearm guard" functions/index.js >/dev/null 2>&1
+vdgg_state_advance 6 implementing >/dev/null 2>&1
+vdgg_task_begin "TA: widened from implementing" functions/index.js functions/new.js \
+    >/tmp/vdgg-test-codex-rearm-blocked.out 2>/tmp/vdgg-test-codex-rearm-blocked.err
+REARM_RC=$?
+assert_exit_code 1 "$REARM_RC" "Codex task_begin from implementing is rejected"
+REARM_ALLOWLIST_CONTENT=$(cat ".codex/.vdgg-task-allowlist-${IDRA}-0")
+assert_eq "functions/index.js" "$REARM_ALLOWLIST_CONTENT" "Codex blocked re-arm leaves active allowlist intact"
+REARM_STEP=$(grep '^step=' ".codex/.vdgg-state-${IDRA}" | cut -d= -f2)
+assert_eq "6" "$REARM_STEP" "Codex blocked re-arm leaves state untouched"
+vdgg_state_advance 7 testing >/dev/null 2>&1
+vdgg_state_advance 8 progress >/dev/null 2>&1
+vdgg_task_begin "TA: widened via 8->5" functions/index.js functions/new.js \
+    >/tmp/vdgg-test-codex-rearm-ok.out 2>/tmp/vdgg-test-codex-rearm-ok.err
+REARM_OK_RC=$?
+assert_exit_code 0 "$REARM_OK_RC" "Codex task_begin re-arms via Step 8 -> Step 5"
+REARM_WIDE_COUNT=$(wc -l < ".codex/.vdgg-task-allowlist-${IDRA}-0" | tr -d ' ')
+assert_eq "2" "$REARM_WIDE_COUNT" "Codex re-arm via 8->5 records the widened allowlist"
+vdgg_state_clear >/dev/null 2>&1
+
 # zsh regression: `local path` would empty $PATH when sourced into zsh.
 if command -v zsh >/dev/null 2>&1; then
     zsh -c "cd '$TMPDIR_VDGG' && export VDGG_CWD='$TMPDIR_VDGG' && source '$ROOT/.agents/skills/vibesdegogo/scripts/vdgg-state.sh' && vdgg_state_init && vdgg_state_advance 2 requirements && vdgg_state_advance 3 investigating && vdgg_state_advance 4 planning && vdgg_state_advance 5 task-selected && vdgg_task_begin 'TZ: zsh probe' functions/index.js" >/tmp/vdgg-test-codex-zsh.out 2>/tmp/vdgg-test-codex-zsh.err

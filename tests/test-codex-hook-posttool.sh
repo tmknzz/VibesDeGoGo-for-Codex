@@ -42,6 +42,46 @@ STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"c
 assert_exit_code 0 "$STATUS" "grep no-match exits cleanly"
 assert_file_not_exists "$TMPDIR_VDGG/.codex/.vdgg-error-pending" "grep exit 1 does not create error flag"
 
+# Codex CLI 0.139.0 delivers tool_response as a plain string, not an object.
+# The hook must not error out under set -e, and must still detect failure from
+# the response text (best-effort, since there is no exit_code in this form).
+rm -f "$TMPDIR_VDGG/.codex/.vdgg-error-pending"
+write_state implementing 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"make build"},"tool_response":"Error: build failed\nsee log"}')
+assert_exit_code 0 "$STATUS" "posttool exits cleanly with string tool_response"
+assert_file_exists "$TMPDIR_VDGG/.codex/.vdgg-error-pending" "string tool_response with error text creates error flag"
+
+rm -f "$TMPDIR_VDGG/.codex/.vdgg-error-pending"
+write_state implementing 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"echo done"},"tool_response":"done"}')
+assert_exit_code 0 "$STATUS" "clean string tool_response exits cleanly"
+assert_file_not_exists "$TMPDIR_VDGG/.codex/.vdgg-error-pending" "clean string tool_response creates no error flag"
+
+# Regression: object shape, exit 0, stdout containing an error word mid-line
+# (e.g. `git log` output "a1b2c3 fix: error in parser") must NOT be misdetected.
+# stdout is checked with a strict start-of-line pattern, so normal output passes.
+rm -f "$TMPDIR_VDGG/.codex/.vdgg-error-pending"
+write_state implementing 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"git log --oneline"},"tool_response":{"exit_code":0,"stdout":"a1b2c3 fix: error in parser","stderr":""}}')
+assert_exit_code 0 "$STATUS" "object exit 0 with error word in stdout exits cleanly"
+assert_file_not_exists "$TMPDIR_VDGG/.codex/.vdgg-error-pending" "error word in normal stdout does not create error flag"
+
+# Regression: object shape, exit 0, stderr containing an error word must still
+# create the error flag (broad scan path over stderr stays alive).
+rm -f "$TMPDIR_VDGG/.codex/.vdgg-error-pending"
+write_state implementing 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"make build"},"tool_response":{"exit_code":0,"stdout":"","stderr":"Error: boom"}}')
+assert_exit_code 0 "$STATUS" "object exit 0 with error word in stderr exits cleanly"
+assert_file_exists "$TMPDIR_VDGG/.codex/.vdgg-error-pending" "error word in stderr still creates error flag"
+
+# Some Codex versions/events omit tool_response entirely. The hook must not error
+# out under set -e (jq type check falls to else), and must pass through cleanly.
+rm -f "$TMPDIR_VDGG/.codex/.vdgg-error-pending"
+write_state implementing 6
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"make build"}}')
+assert_exit_code 0 "$STATUS" "missing tool_response exits cleanly"
+assert_file_not_exists "$TMPDIR_VDGG/.codex/.vdgg-error-pending" "missing tool_response creates no error flag"
+
 # Review sentinel: Edit during testing flips modified=1 on the review sentinel.
 write_state testing 7
 mkdir -p "$TMPDIR_VDGG/src"

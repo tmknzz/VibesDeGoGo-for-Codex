@@ -224,6 +224,7 @@ Choose exactly one task sized for a full implementation cycle:
 - do not select umbrella tasks such as `T1-T3` or "all model providers";
 - if the selected task cannot be verified with the current acceptance criteria in one Step 7, split it before Step 6.
 - declare an allowlist of every implementation/test/documentation file this task is allowed to change; keep it narrow and task-specific.
+- if the task changes an interface, enum, type, or signature, include the test file(s) that assert it in the allowlist; Step 6 cannot return to Step 5 to re-arm a wider allowlist.
 
 Choose one task and record it:
 
@@ -256,7 +257,7 @@ Do not run verification commands in this phase.
 
 ## Step 7: Verify And Review
 
-State the verification checks you will run, scaled to the change's surface — roughly 1 to 3 for a small, localized change, more when it spans multiple files or touches a contract; do not stop at three if the surface is larger. At least one must be a check that would FAIL if the change were wrong — a boundary, error, or regression case, not only a happy-path confirmation. Then run them through `vdgg_task_gate`. Pass the verification command as separate shell words, for example `vdgg_task_gate npm test`, or use `vdgg_task_gate bash -lc 'command with pipes'`.
+State the verification checks you will run, scaled to the change's surface — roughly 1 to 3 for a small, localized change, more when it spans multiple files or touches a contract; do not stop at three if the surface is larger. At least one must be a check that would FAIL if the change were wrong — a boundary, error, or regression case, not only a happy-path confirmation. Then run them through `vdgg_task_gate`. Pass the verification command as separate shell words, for example `vdgg_task_gate npm test`, or use `vdgg_task_gate bash -lc 'set -o pipefail; command with pipes'`. Without `set -o pipefail`, a failing command earlier in the pipe can be masked by a later stage's exit code, and the gate records a false pass.
 
 ```bash
 # [VibesDeGoGo! Step 7 Start] step=7, phase=testing, loop=0
@@ -347,6 +348,8 @@ Write `tasks/vdgg/{id}/investigation-r{loop}.md` and update `progress.md` with:
 2. Pattern Analysis.
 3. Hypothesis: exactly one hypothesis.
 4. Implementation plan: exactly one fix.
+
+When the loop was triggered by review or simplify findings rather than a test failure, this can be lightweight: write `investigation-r{loop}.md` directly from the review findings (classification plus the one fix) instead of opening a new deep root-cause investigation.
 
 Return to implementation:
 

@@ -59,6 +59,18 @@ block() {
   exit 2
 }
 
+# Portable mtime in epoch seconds. BSD/macOS `stat -f %m` gives the epoch. On
+# GNU/Linux `-f` means --file-system and prints non-numeric text with exit 0, so
+# the raw `||` chain is not enough: validate the result is all-digits and fall
+# back to `stat -c %Y`, then to 0.
+_vdgg_mtime() {
+  local m
+  m=$(stat -f %m "$1" 2>/dev/null || true)
+  case "$m" in ''|*[!0-9]*) m=$(stat -c %Y "$1" 2>/dev/null || true) ;; esac
+  case "$m" in ''|*[!0-9]*) m=0 ;; esac
+  printf '%s\n' "$m"
+}
+
 patch_files() {
   printf '%s\n' "$COMMAND" \
     | sed -nE 's/^\*\*\* (Add|Update|Delete) File: (.*)$/\2/p'
@@ -241,6 +253,23 @@ case "$PHASE" in
     # verified is only reachable from testing after review, never from reflection.
     if [ "$TOOL_NAME" = "Bash" ] && printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(advance|loop|write)[[:space:]]+[0-9]+[[:space:]]+verified'; then
       block "verified is only reachable from testing after review, not from reflection."
+    fi
+    # Returning to implementing requires a fresh retry investigation: both
+    # investigation-r{loop}.md and progress.md must exist and be newer than the
+    # state file (mtime, seconds precision). This stops a blind retry that skips
+    # analysis of the failure. Known limit: seconds-precision mtime can tie if a
+    # file is written in the same second the state was last written.
+    if [ "$TOOL_NAME" = "Bash" ] \
+      && printf '%s' "$COMMAND" | grep -qE 'vdgg_state_(loop|advance|write)[[:space:]]+6[[:space:]]+implementing'; then
+      RETRY_INVESTIGATION_FILE="$TASKS_DIR/investigation-r${LOOP_COUNT}.md"
+      PROGRESS_FILE="$TASKS_DIR/progress.md"
+      [ -f "$RETRY_INVESTIGATION_FILE" ] || block "Write a retry investigation (investigation-r${LOOP_COUNT}.md) before returning to implementing."
+      [ -f "$PROGRESS_FILE" ] || block "Update progress.md before returning to implementing."
+      STATE_MTIME=$(_vdgg_mtime "$STATE_FILE")
+      [ "$(_vdgg_mtime "$RETRY_INVESTIGATION_FILE")" -gt "$STATE_MTIME" ] \
+        || block "Write a fresh retry investigation (investigation-r${LOOP_COUNT}.md) before returning to implementing."
+      [ "$(_vdgg_mtime "$PROGRESS_FILE")" -gt "$STATE_MTIME" ] \
+        || block "Update progress.md before returning to implementing."
     fi
     ;;
   verified|progress|commit)

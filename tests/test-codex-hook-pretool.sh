@@ -83,9 +83,25 @@ EOF
 STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"# [VibesDeGoGo! Step 7 Start] step=7, phase=verified, loop=0\nvdgg_state_advance 7 verified"}}')
 assert_exit_code 0 "$STATUS" "verified transition passes after task gate and review sentinel"
 
+# P1-CX-2: reflection -> implementing requires a fresh retry investigation.
+# Without investigation-r{loop}.md the return is blocked.
 write_state reflection 6
+rm -f "$TMPDIR_VDGG/tasks/vdgg/test-id/investigation-r0.md" "$TMPDIR_VDGG/tasks/vdgg/test-id/progress.md"
 STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"# [VibesDeGoGo! Step 6 Start] step=6, phase=implementing, loop=0\nvdgg_state_loop 6 implementing"}}')
-assert_exit_code 0 "$STATUS" "Codex reflection retry transition is currently allowed by pretool"
+assert_exit_code 2 "$STATUS" "reflection retry is blocked without a retry investigation"
+
+# With investigation-r{loop}.md and progress.md both newer than the state file,
+# the return to implementing is allowed.
+write_state reflection 6
+printf 'retry notes\n' > "$TMPDIR_VDGG/tasks/vdgg/test-id/investigation-r0.md"
+printf 'progress\n' > "$TMPDIR_VDGG/tasks/vdgg/test-id/progress.md"
+# Make the state file old so the retry files written above are strictly newer
+# (mtime is seconds precision; this avoids a same-second tie without the
+# non-portable `stat -f` / `date -r` epoch math, which differs on GNU vs BSD).
+# `touch -t CCYYMMDDhhmm` is POSIX and behaves the same on macOS and Linux.
+touch -t 202601010000 "$TMPDIR_VDGG/.codex/.vdgg-state-test-id"
+STATUS=$(run_hook '{"tool_name":"Bash","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"command":"# [VibesDeGoGo! Step 6 Start] step=6, phase=implementing, loop=0\nvdgg_state_loop 6 implementing"}}')
+assert_exit_code 0 "$STATUS" "reflection retry passes with fresh investigation-r and progress"
 
 write_state investigating 3
 STATUS=$(run_hook '{"tool_name":"Edit","cwd":"'"$TMPDIR_VDGG"'","tool_input":{"file_path":"'"$TMPDIR_VDGG"'/.codex/.vdgg-active"}}')

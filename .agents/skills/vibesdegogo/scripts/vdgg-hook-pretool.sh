@@ -13,8 +13,13 @@ if ! command -v jq >/dev/null 2>&1; then
   fi
   # Fail-open when inactive: no active session means nothing to protect, so stay
   # out of the way rather than blocking every tool in unrelated repositories.
+  # Exception: when the repository opts in with VDGG_REQUIRED=on, tools cannot
+  # be classified without jq, so fall through to the fail-closed branch below.
   if [ ! -f "$FALLBACK_CWD/.codex/.vdgg-active" ]; then
-    exit 0
+    FALLBACK_REQUIRED=$(grep -m1 '^VDGG_REQUIRED=' "$FALLBACK_CWD/.vdgg-target" 2>/dev/null | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/' || true)
+    if [ "$FALLBACK_REQUIRED" != "on" ]; then
+      exit 0
+    fi
   fi
   # Active session: cannot parse JSON properly, so fail closed. Allow jq-install
   # commands through so the user can fix the missing dependency.
@@ -37,12 +42,91 @@ if ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null); then
   CWD="$ROOT"
 fi
 
+# Entry gate (VDGG_REQUIRED): normally an unarmed session (no active id or
+# state) leaves the hook fail-open so unrelated repositories are never
+# touched. A repository can opt out of that leniency with VDGG_REQUIRED=on in
+# .vdgg-target: code-modifying tools are then denied until a session is armed
+# through vdgg_state_init. This closes the hole where an agent that ignores
+# the workflow contract simply never arms the gates (arming must not be a
+# voluntary act). Only the literal value `on` activates the gate. Gated tools
+# match the armed path (apply_patch/Edit/Write/Bash); other tools pass, as
+# they do when armed. Known limit (same as the sidecar guard): a write hidden
+# behind a shell variable or an interpreter one-liner evades the literal
+# segment match.
+_vdgg_required() {
+  local target="$CWD/.vdgg-target" v
+  [ -f "$target" ] || return 1
+  v=$(grep -m1 '^VDGG_REQUIRED=' "$target" | sed -E 's/^[^=]*=//; s/^"(.*)"$/\1/' || true)
+  [ "$v" = "on" ]
+}
+
+_vdgg_entry_deny() {
+  echo "VibesDeGoGo! for Codex entry gate: this repository sets VDGG_REQUIRED=on in .vdgg-target and no VibesDeGoGo! session is armed. Code-modifying tools are blocked until Step 1 runs: source the skill's scripts/vdgg-state.sh and run vdgg_state_init. Only a human may relax this by editing .vdgg-target." >&2
+  exit 2
+}
+
+_vdgg_entry_gate() {
+  local tool cmd segs seg seg_checked verb
+  tool=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')
+  case "$tool" in
+    apply_patch|Edit|Write)
+      _vdgg_entry_deny
+      ;;
+    Bash)
+      cmd=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
+      segs="$cmd"
+      segs="${segs//&&/$'\n'}"
+      segs="${segs//||/$'\n'}"
+      segs="${segs//;/$'\n'}"
+      segs="${segs//|/$'\n'}"
+      while IFS= read -r seg; do
+        # Redirections to /dev/null|stdout|stderr do not modify the
+        # repository; strip them (fd dups like 2>&1 are already excluded by
+        # the [^&] below) so read-only idioms are not falsely denied.
+        seg_checked=$(printf '%s' "$seg" | sed -E 's#[0-9]*>>?[[:space:]]*/dev/(null|stdout|stderr)##g')
+        if printf '%s' "$seg_checked" | grep -qE '(>[^&]|>>|(^|[[:space:]])tee([[:space:]]|$))'; then
+          _vdgg_entry_deny
+        fi
+        if printf '%s' "$seg" | grep -qE '(^|[^a-zA-Z0-9_-])git[[:space:]]+commit($|[[:space:]])'; then
+          _vdgg_entry_deny
+        fi
+        verb=$(printf '%s' "$seg" | sed -E 's/^[[:space:]]*//; s/[[:space:]].*//')
+        case "$verb" in
+          rm|mv|cp|dd|install|truncate|touch|ln|patch|mkfifo|apply_patch)
+            # apply_patch also arrives as a shell command in some Codex
+            # versions, not only as the apply_patch tool.
+            _vdgg_entry_deny
+            ;;
+          sed|perl)
+            if printf '%s' "$seg" | grep -qE '(^|[[:space:]])-[a-zA-Z]*i'; then
+              _vdgg_entry_deny
+            fi
+            ;;
+        esac
+      done <<< "$segs"
+      exit 0
+      ;;
+    *)
+      exit 0
+      ;;
+  esac
+}
+
+# Unarmed exit: with the VDGG_REQUIRED opt-in the entry gate decides
+# (always exits); without it the hook stays out of the way.
+_vdgg_unarmed_exit() {
+  if _vdgg_required; then
+    _vdgg_entry_gate
+  fi
+  exit 0
+}
+
 ACTIVE_FILE="$CWD/.codex/.vdgg-active"
-[ -f "$ACTIVE_FILE" ] || exit 0
+[ -f "$ACTIVE_FILE" ] || _vdgg_unarmed_exit
 VDGG_ID=$(cat "$ACTIVE_FILE")
-[ -n "$VDGG_ID" ] || exit 0
+[ -n "$VDGG_ID" ] || _vdgg_unarmed_exit
 STATE_FILE="$CWD/.codex/.vdgg-state-${VDGG_ID}"
-[ -f "$STATE_FILE" ] || exit 0
+[ -f "$STATE_FILE" ] || _vdgg_unarmed_exit
 
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')

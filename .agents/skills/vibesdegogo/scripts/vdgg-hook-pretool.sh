@@ -59,9 +59,16 @@ block() {
   exit 2
 }
 
-# Portable mtime in epoch seconds. Tries BSD/macOS first, then GNU/Linux, then 0.
+# Portable mtime in epoch seconds. BSD/macOS `stat -f %m` gives the epoch. On
+# GNU/Linux `-f` means --file-system and prints non-numeric text with exit 0, so
+# the raw `||` chain is not enough: validate the result is all-digits and fall
+# back to `stat -c %Y`, then to 0.
 _vdgg_mtime() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+  local m
+  m=$(stat -f %m "$1" 2>/dev/null || true)
+  case "$m" in ''|*[!0-9]*) m=$(stat -c %Y "$1" 2>/dev/null || true) ;; esac
+  case "$m" in ''|*[!0-9]*) m=0 ;; esac
+  printf '%s\n' "$m"
 }
 
 patch_files() {

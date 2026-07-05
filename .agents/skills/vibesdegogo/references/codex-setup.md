@@ -84,7 +84,7 @@ Then add the hook commands to `~/.codex/hooks.json` or the equivalent Codex hook
 }
 ```
 
-The hook scripts no-op unless the current repository has `.codex/.vdgg-active`, so global registration is safe for non-VDGG work.
+The hook scripts no-op unless the current repository has `.codex/.vdgg-active`, so global registration is safe for non-VDGG work. One exception: a repository whose `.vdgg-target` sets `VDGG_REQUIRED=on` denies code-modifying tools while no session is armed (see "Entry Gate: VDGG_REQUIRED" in SKILL.md) — that is the key's purpose, and repositories without the key are untouched.
 
 ## Enable hooks repo-locally
 

@@ -107,6 +107,24 @@ GRILLME=auto
 
 If the Grill Me skill is not installed, the setting is treated as `off` and Step 0 continues with Consultation. The orchestrating agent invokes the installed Grill Me skill directly; there is no shell helper for this (the same convention as MAGI escalation).
 
+## Entry Gate: VDGG_REQUIRED
+
+Normally the hooks are fail-open while no VibesDeGoGo! session is armed (no `.codex/.vdgg-active`), so unrelated repositories are never blocked. A repository can opt out of that leniency in `.vdgg-target`:
+
+```bash
+# Entry gate. While no session is armed, the pretool hook denies
+# apply_patch/Edit/Write, Bash segments that write files (redirects to real
+# paths, tee, rm/mv/cp/dd/install/truncate/touch/ln/patch/mkfifo/apply_patch,
+# sed/perl -i) and `git commit` — including writes to .vdgg-target itself, so
+# the gate cannot be self-disabled. Read-only commands, builds, and the
+# arming command (vdgg_state_init) stay allowed. Without jq the hook fails
+# closed while this key is on. Only the literal value `on` activates the
+# gate; absent/off/other values keep the historical fail-open behavior.
+VDGG_REQUIRED=off
+```
+
+Set `VDGG_REQUIRED=on` in repositories where every code change must go through the VibesDeGoGo! workflow: arming the gates is then no longer a voluntary act, so an agent that skips Step 1 cannot edit or commit at all. The deny message points to `vdgg_state_init`. Known limits match the sidecar guard: interpreter one-liners and writes hidden behind shell variables evade the literal segment match — the gate stops contract-ignoring drift, not a deliberately evasive agent.
+
 ## Step 1: Formation
 
 ```bash

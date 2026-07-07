@@ -21,7 +21,7 @@ bash + jq. No account, keys, or telemetry. MIT.
 6. Verify with concrete checks.
 7. Run a focused simplification/review pass.
 8. Update progress and ask for validation when needed.
-9. Commit and create a PR for the default `branch-pr` workflow.
+9. Commit, and for the default `branch-pr` workflow, create a PR and stop.
    (A PR is GitHub's confirmation page for a proposed change: nothing lands
    on the main code until you approve the merge.)
 

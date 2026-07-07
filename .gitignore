@@ -1,3 +1,6 @@
-# VibesDeGoGo! self-maintenance (dogfooding) state — not part of the distribution.
+# Codex / VibesDeGoGo!
 .codex/.vdgg-*
+
+# Claude Code / VibesDeGoGo!
+.claude/.vdgg-*
 tasks/vdgg/

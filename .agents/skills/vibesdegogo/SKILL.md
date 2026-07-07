@@ -1,7 +1,7 @@
 ---
 name: vibesdegogo
 description: "Use VibesDeGoGo! for Codex when the user asks Codex to carry coding work through requirements, investigation, planning, implementation, verification, progress reporting, and commit/PR with safety stops."
-version: 0.3.0
+version: 0.4.0
 ---
 
 # VibesDeGoGo! for Codex

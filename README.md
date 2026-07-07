@@ -76,6 +76,18 @@ apk add jq                    # Alpine
 sudo dnf install jq           # Fedora / RHEL
 ```
 
+## Uninstall
+
+The complete footprint, so you (or your agent) can remove everything:
+
+- Delete `~/.agents/skills/vibesdegogo/`.
+- Remove the four hook entries (`PreToolUse`, `PostToolUse`, `Stop`,
+  `UserPromptSubmit`) that reference `vdgg-hook-*.sh` from `~/.codex/hooks.json`.
+- Per-repository session artifacts: `.codex/.vdgg-*` and `tasks/vdgg/` are
+  safe to delete. `.gitignore` gains an auto-appended block for `.codex/.vdgg-*`;
+  drop it if you like.
+- Keep `.vdgg-target` — it is your configuration file, not something VDGG installed.
+
 ## Test
 
 ```bash

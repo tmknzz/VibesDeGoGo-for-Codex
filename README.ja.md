@@ -77,6 +77,17 @@ apk add jq                    # Alpine
 sudo dnf install jq           # Fedora / RHEL
 ```
 
+## アンインストール
+
+すべての足跡の一覧です（あなた自身でも、Codex に頼む場合でもこのリストで完遂できます）:
+
+- `~/.agents/skills/vibesdegogo/` を削除する。
+- `~/.codex/hooks.json` から `vdgg-hook-*.sh` を参照するフック4件
+  （`PreToolUse` / `PostToolUse` / `Stop` / `UserPromptSubmit`）を除去する。
+- 各リポジトリ内のセッション生成物: `.codex/.vdgg-*` と `tasks/vdgg/` は削除して安全です。
+  `.gitignore` に自動追記される `.codex/.vdgg-*` のブロックも不要なら消してかまいません。
+- `.vdgg-target` は残してください — これはあなたの設定ファイルで、VDGG が入れたものではありません。
+
 ## テスト
 
 ```bash

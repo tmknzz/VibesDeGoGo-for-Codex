@@ -235,7 +235,7 @@ vdgg_state_advance 4 planning
 
 ## Step 5: Select One Task
 
-Choose exactly one task sized for a full implementation cycle:
+Choose exactly one task sized for a full implementation cycle — or, during a followup sweep, the next pending `TF` task from the queue in `progress.md`:
 
 - one task must be small enough to complete implementation, tests, build, and real/manual check in one Step 6 to Step 8 loop;
 - split separate provider/API/auth/key-storage/UI/persistence/versioning risks into separate tasks;
@@ -332,6 +332,23 @@ STEP6_EXECUTOR_COMMAND=""
 
 Step 6 delegation stays subject to the task allowlist and `vdgg_task_gate`; out-of-allowlist edits by the executor are caught at the gate.
 
+### Review findings: severity-based response
+
+After the Step 7 review — self-review, `vdgg_review_run`, or MAGI — surfaces findings, classify each one and decide before editing:
+
+- **high**: correctness bug, data loss, race condition, security, contract regression.
+- **medium**: real bug with a narrow trigger, or a design that will break under reasonable use.
+- **low**: cosmetic, stale doc, log message wording, naming, dead branch, style.
+
+Response:
+
+- Any **high or medium** finding → fix it in implementation files. The review sentinel (`.codex/.vdgg-review-sentinel-{id}-{loop}`) will flip to `modified=1`, routing you through reflection — this is correct.
+- **All findings are low (or `[]`)** → DO NOT edit implementation files. Append the findings to `tasks/vdgg/{id}/followup.md` — or, inside a `TF` followup task, to `followup-final.md` — and advance directly to `verified`. Low items are collected by the Step 8 followup sweep.
+
+This stops convergence-loops on cosmetic findings while keeping the hook discipline intact: any implementation edit during testing still flips `modified=1`, so there is no escape hatch for high/medium.
+
+When listing findings, always assign an explicit `severity` field per finding so the classification is auditable. If the review output omits severity, classify each finding yourself before deciding the response.
+
 Finally advance:
 
 ```bash
@@ -397,6 +414,23 @@ vdgg_state_advance 8 progress
 
 Update `progress.md`, update configured version files if `.vdgg-target` requires it, and ask the user for validation when needed.
 
+Check whether all tasks are complete:
+
+- unfinished tasks: go back to Step 5,
+- all planned tasks complete: run the followup sweep below, then continue to Step 9.
+
+### Followup sweep (low findings)
+
+On the FIRST Step 8 entry after all planned tasks are complete, build the sweep queue exactly once: read `tasks/vdgg/{id}/followup.md`; if it is empty or absent, continue to Step 9. Otherwise group its items into followup tasks using the task-sizing rules in Step 5, name them with a `TF` prefix (`TF1: ...`, `TF2: ...`), and record the queue in `progress.md` with a status per task (pending / fixed / residue).
+
+Then return to Step 5 (8 -> 5) for the next pending `TF` task, so every fix runs through the normal allowlist, task gate, and review gate, and lands in the same branch and PR as the planned work. Later Step 8 entries during the sweep do NOT re-read `followup.md`; they update the queue statuses in `progress.md` and pick 8 -> 5 while pending `TF` tasks remain, Step 9 when none do. During the sweep, skip the per-task validation ask above — request validation once, before Step 9.
+
+Sweep rules:
+
+- A `TF` task's re-review may be a single lightweight review pass: its scope was already screened and classified by a planned task's review.
+- New low findings discovered inside a `TF` task go to `followup-final.md` (append, never overwrite) and are NOT queued — list them as residue in the Step 9 report.
+- An item judged unsafe or out of scope to fix is marked `residue` in the queue with the reason and listed in the Step 9 report.
+
 ## Step 9: Commit
 
 Advance:
@@ -422,7 +456,8 @@ Default `branch-pr` behavior:
 2. push the feature branch,
 3. create a PR,
 4. report the PR URL,
-5. stop for human merge approval.
+5. report any residue from the followup sweep — each unfixed low finding with the reason it was left,
+6. stop for human merge approval.
 
 `trunk` workflow is allowed only when `.vdgg-target` explicitly sets `WORKFLOW=trunk`.
 

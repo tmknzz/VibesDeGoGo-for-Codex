@@ -16,6 +16,29 @@ Trigger phrases include `VibesDeGoGo! for Codex`, `VibesDeGoGo!`, `/VibesDeGoGo!
 
 Do not use it for wording-only requests, open-ended discussion, or brainstorming where no repository workflow should execute.
 
+## Agent Role
+
+- Declare before acting: output a Step declaration at the beginning of each Step (unless `STEP_REPORT=quiet` — see Step reporting below).
+
+### Step reporting
+
+Whenever work is delegated to a subagent or an external executor, output one line in the user-facing text before the delegation:
+
+```text
+[VibesDeGoGo! Delegate] step=N, executor=<model or command>, role=<short role>
+```
+
+`.vdgg-target` may set (read with safe key extraction — never `source` the file):
+
+```bash
+# Chat step reporting. quiet omits chat step declarations and interim
+# narration. Only the literal value quiet enables quiet mode; any other
+# value behaves as verbose.
+STEP_REPORT=verbose
+```
+
+In quiet mode, omit the chat Step declarations and interim narration. Bash-embedded state-transition declarations (validated by the hooks) are unchanged. Quiet mode never omits: the Step 0 agreement, Delegate lines, `[Intentional Stop]`, `[Error Acknowledged]` (embedded in the next Bash command string, not chat text — see Important Codex Differences), the Step 8 validation request, and the final completion report.
+
 ## Important Codex Differences
 
 - State lives in `.codex/.vdgg-active` and `.codex/.vdgg-state-{id}`.
@@ -323,8 +346,9 @@ Relevant `.vdgg-target` keys for Step 7 and step delegation:
 REVIEW_COMMAND="claude -p 'review the working tree diff for correctness and security (injection, secrets exposure, unsafe file/network/exec operations, data loss); exit non-zero on blocking findings'"
 
 # Optional delegated step executors. When set, run the command for that step
-# instead of working inline, then validate the output artifacts (file exists +
-# required headings) before advancing.
+# instead of working inline (output a Delegate line first — see Step
+# reporting), then validate the output artifacts (file exists + required
+# headings) before advancing.
 STEP3_EXECUTOR_COMMAND=""
 STEP4_EXECUTOR_COMMAND=""
 STEP6_EXECUTOR_COMMAND=""

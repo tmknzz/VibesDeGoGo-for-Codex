@@ -233,7 +233,7 @@ vdgg_state_advance 2 requirements
 - Read lessons from recent sessions and record the applicable ones in `investigation.md` under a `## Lessons applied` heading (write `none applicable` when nothing fits):
 
   ```bash
-  for f in $(ls -t tasks/vdgg/*/lessons.md 2>/dev/null | head -20); do echo "--- $f ---"; cat "$f"; done
+  for f in $(find tasks/vdgg -name lessons.md -exec ls -t {} + 2>/dev/null | head -20); do echo "--- $f ---"; cat "$f"; done
   ```
 - Record unknowns explicitly in `tasks/vdgg/{id}/investigation.md`.
 
@@ -495,11 +495,11 @@ Default `branch-pr` behavior:
 2. push the feature branch,
 3. create a PR,
 4. report the PR URL,
-5. report any residue from the followup sweep — each unfixed low finding with the reason it was left,
-6. report a lessons line (`lessons applied: N / new: M`),
-7. stop for human merge approval.
+5. stop for human merge approval.
 
 `trunk` workflow is allowed only when `.vdgg-target` explicitly sets `WORKFLOW=trunk`.
+
+## Clear State And Finish
 
 After PR creation or trunk commit/push decision:
 
@@ -510,6 +510,8 @@ VDGG_CODEX_SKILL_DIR="${VDGG_CODEX_SKILL_DIR:-$HOME/.agents/skills/vibesdegogo}"
 source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_clear
 ```
+
+Regardless of workflow, before reporting completion: report any residue from the followup sweep — each unfixed low finding with the reason it was left — and report a lessons line (`lessons applied: N / new: M`).
 
 ## Stop Conditions
 

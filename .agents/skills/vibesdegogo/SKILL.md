@@ -37,7 +37,7 @@ Whenever work is delegated to a subagent or an external executor, output one lin
 STEP_REPORT=verbose
 ```
 
-In quiet mode, omit the chat Step declarations and interim narration. Bash-embedded state-transition declarations (validated by the hooks) are unchanged. Quiet mode never omits: the Step 0 agreement, Delegate lines, `[Intentional Stop]`, `[Error Acknowledged]` (embedded in the next Bash command string, not chat text — see Important Codex Differences), the Step 8 validation request, and the final completion report.
+In quiet mode, omit the chat Step declarations and interim narration. Bash-embedded state-transition declarations (validated by the hooks) are unchanged. Quiet mode never omits: the Step 0 agreement, Delegate lines, Lesson lines, `[Intentional Stop]`, `[Error Acknowledged]` (embedded in the next Bash command string, not chat text — see Important Codex Differences), the Step 8 validation request, and the final completion report.
 
 ## Important Codex Differences
 
@@ -228,7 +228,14 @@ vdgg_state_advance 2 requirements
 
 ## Step 3: Investigation
 
-Read actual project files. Do not guess. Trace direct callers and impact. Record unknowns explicitly in `tasks/vdgg/{id}/investigation.md`.
+- Read actual project files. Do not guess.
+- Trace direct callers and impact.
+- Read lessons from recent sessions and record the applicable ones in `investigation.md` under a `## Lessons applied` heading (write `none applicable` when nothing fits):
+
+  ```bash
+  for f in $(ls -t tasks/vdgg/*/lessons.md 2>/dev/null | head -20); do echo "--- $f ---"; cat "$f"; done
+  ```
+- Record unknowns explicitly in `tasks/vdgg/{id}/investigation.md`.
 
 Advance:
 
@@ -421,6 +428,14 @@ source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
 vdgg_state_loop 6 implementing
 ```
 
+Right after returning to `implementing`, distill any reusable lesson from this reflection into `tasks/vdgg/{id}/lessons.md` — one entry per lesson: symptom → wrong assumption → correct move. Before writing, re-run the Step 3 lessons command and skip duplicates; write nothing when the failure was one-off (lessons are deliberately failure-derived — clean-pass insights are out of scope). After writing an entry, output one line in the user-facing text so the user can veto it on the spot, while the phase still allows deleting the entry:
+
+```text
+[VibesDeGoGo! Lesson] <one-line summary>
+```
+
+(The reflection phase itself cannot write this file: the pretool hook allows only `progress.md` and `investigation-r*.md` there.)
+
 If the revised hypothesis needs files outside the current allowlist, do not try to widen the allowlist in place — `vdgg_task_begin` cannot re-arm outside Step 5 (6 -> 5 is not a legal transition) and will fail loudly. Adapt the fix to the current allowlist (e.g. downgrade an optional cleanup to a followup note), or complete/close this task and take the wider scope as a new task via Step 8 -> Step 5.
 
 ## Step 8: Progress And Validation Request
@@ -481,7 +496,8 @@ Default `branch-pr` behavior:
 3. create a PR,
 4. report the PR URL,
 5. report any residue from the followup sweep — each unfixed low finding with the reason it was left,
-6. stop for human merge approval.
+6. report a lessons line (`lessons applied: N / new: M`),
+7. stop for human merge approval.
 
 `trunk` workflow is allowed only when `.vdgg-target` explicitly sets `WORKFLOW=trunk`.
 

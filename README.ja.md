@@ -25,6 +25,49 @@ bash と jq のみ。アカウント・鍵・テレメトリなし。MIT。
    （PR＝プルリクエストは GitHub の「変更確認ページ」です。あなたが merge を
    承認するまで、本体のコードには何も反映されません。）
 
+## StepごとのAI指定（Formation）
+
+名前付きFormationで、各Stepの担当AIを自由に割り当てられます。設定はリポジトリではなく、信頼済みのユーザー設定 `~/.config/vdgg` に置きます。
+
+```text
+~/.config/vdgg/
+  formations/local-balanced.conf
+  executors/qwen.conf
+  executors/gemma.conf
+```
+
+Formationは全Stepを明示します。省略による暗黙fallbackはありません。
+
+```ini
+STEP_0_AI=inline
+STEP_1_AI=inline
+STEP_2_AI=inline
+STEP_3_AI=inline
+STEP_4_AI=inline
+STEP_5_AI=inline
+STEP_6_AI=qwen
+STEP_6R_AI=inline
+STEP_7_AI=gemma
+STEP_8_AI=inline
+STEP_9_AI=inline
+STEP_0_GRILL_AI=qwen
+```
+
+各executor設定には、引数なしで起動できる絶対パスのwrapperだけを書きます。shell文字列として評価しません。
+
+```ini
+# ~/.config/vdgg/executors/qwen.conf
+COMMAND=/Users/you/.local/bin/vdgg-qwen
+```
+
+CodexへFormation名を指定すると、Step 1で次の形で固定されます。
+
+```bash
+vdgg_state_init --formation local-balanced
+```
+
+wrapperは`VDGG_EXECUTOR_FORMATION`、`VDGG_EXECUTOR_AI`、`VDGG_EXECUTOR_STEP`、`VDGG_EXECUTOR_INPUT`、`VDGG_EXECUTOR_OUTPUT`を受け取ります。外部AIが失敗した場合はstateを保持して停止し、`inline`へ黙って切り替えません。Formationを指定しなければ、従来のCodex実行と`.vdgg-target` executor設定がそのまま動きます。
+
 ## 構成
 
 ```text

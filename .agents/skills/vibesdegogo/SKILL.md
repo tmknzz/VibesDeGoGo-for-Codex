@@ -39,6 +39,28 @@ STEP_REPORT=verbose
 
 In quiet mode, omit the chat Step declarations and interim narration. Bash-embedded state-transition declarations (validated by the hooks) are unchanged. Quiet mode never omits: the Step 0 agreement, Delegate lines, Lesson lines, `[Intentional Stop]`, `[Error Acknowledged]` (embedded in the next Bash command string, not chat text — see Important Codex Differences), the Step 8 validation request, and the final completion report.
 
+### Step AI Formations
+
+A Formation is a named, complete Step-to-AI assignment. Select it before Step 0 with `VDGG_FORMATION=<name>` or an explicit user instruction. Before consultation begins, source `vdgg-state.sh`, run `vdgg_formation_preflight <name>`, and resolve `STEP_0_AI` and `STEP_0_GRILL_AI` with that explicit name. Then pass the same name to `vdgg_state_init --formation <name>` in Step 1. Formation files and executor definitions are trusted user configuration outside the repository:
+
+```text
+${VDGG_CONFIG_DIR:-$HOME/.config/vdgg}/
+  formations/<name>.conf
+  executors/<ai>.conf
+```
+
+A Formation must define every key: `STEP_0_AI` through `STEP_9_AI`, plus `STEP_6R_AI` and `STEP_0_GRILL_AI`. `inline` means the current Codex agent. Any other AI name must have an executor file containing one `COMMAND=/absolute/path/to/executable` line. The parser never sources these files and the command is executed directly, not through a shell string.
+
+When a Formation is selected, resolve the assigned AI before acting in every Step with `vdgg_formation_resolve <STEP_KEY>`. Use `STEP_6R_AI` for reflection and `STEP_0_GRILL_AI` for Grill Me. Then:
+
+1. `inline`: work normally in the current agent.
+2. External AI: write the smallest sufficient input artifact, output the Delegate line, and call `vdgg_executor_run <STEP_KEY> <input-file> [output-file]`.
+3. Validate the expected artifact before advancing. A non-zero executor result, missing output, unknown AI, or invalid Formation stops the workflow with state unchanged. Never silently fall back to `inline` or a legacy command.
+
+The executor receives `VDGG_EXECUTOR_FORMATION`, `VDGG_EXECUTOR_AI`, `VDGG_EXECUTOR_STEP`, `VDGG_EXECUTOR_INPUT`, and `VDGG_EXECUTOR_OUTPUT`. State transitions, task allowlists, review gates, and commit permissions remain owned by the controlling VDGG session.
+
+With no Formation selected, all historical behavior remains active, including the optional `.vdgg-target` `STEP3_EXECUTOR_COMMAND`, `STEP4_EXECUTOR_COMMAND`, `STEP6_EXECUTOR_COMMAND`, and `REVIEW_COMMAND` keys.
+
 ## Important Codex Differences
 
 - State lives in `.codex/.vdgg-active` and `.codex/.vdgg-state-{id}`.
@@ -111,6 +133,8 @@ When Grill Me is engaged, Step 0 runs in three layers before drafting:
 
 Then drafting `requirements.md` proceeds as usual.
 
+If a selected Formation assigns `STEP_0_GRILL_AI` to an external AI, that executor owns the complete Grill Me conversation. Its command must keep the transcript out of stdout/stderr and write only the final handoff file. `vdgg_executor_run` accepts that handoff only when its level-2 headings are exactly, in order: `Goal`, `Constraints`, `Acceptance criteria`, `Decisions`, and `Unresolved questions`. The HQ consumes that file, not the conversation transcript. If the executor cannot own the interaction on the current surface, stop and report the limitation; do not relay every turn through HQ and call it equivalent.
+
 Grill Me is a pre-filter, not a replacement for MAGI. Skipping Grill Me is safe because MAGI remains the deeper-deliberation backstop for high-stakes forks.
 
 Control via `.vdgg-target`:
@@ -128,7 +152,7 @@ Control via `.vdgg-target`:
 GRILLME=auto
 ```
 
-If the Grill Me skill is not installed, the setting is treated as `off` and Step 0 continues with Consultation. The orchestrating agent invokes the installed Grill Me skill directly; there is no shell helper for this (the same convention as MAGI escalation).
+When no Formation assigns an external Grill Me executor, a missing Grill Me skill makes the setting behave as `off` and Step 0 continues with Consultation. In that legacy path, the orchestrating agent invokes the installed Grill Me skill directly; there is no shell helper for it (the same convention as MAGI escalation).
 
 ## Entry Gate: VDGG_REQUIRED
 
@@ -157,7 +181,11 @@ if [ ! -f "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh" ]; then
   VDGG_CODEX_SKILL_DIR="$VDGG_REPO_ROOT/.agents/skills/vibesdegogo"
 fi
 source "$VDGG_CODEX_SKILL_DIR/scripts/vdgg-state.sh"
-vdgg_state_init
+if [ -n "${VDGG_FORMATION:-}" ]; then
+  vdgg_state_init --formation "$VDGG_FORMATION"
+else
+  vdgg_state_init
+fi
 ```
 
 For the default `branch-pr` workflow, create a feature branch after initialization and before code edits.
@@ -346,7 +374,7 @@ vdgg_review_run
 
 For a **subjective artifact** (docs, copy, naming, design — where quality is a judgment, not something a test can decide), this review pass can be the `MAGI` skill when it is installed: run MAGI as the review and `vdgg_state_mark_reviewed` only when MAGI passes. If MAGI is not installed, do the focused review yourself as above. MAGI judges desirability, not code correctness — correctness still rides on tests and your review.
 
-Relevant `.vdgg-target` keys for Step 7 and step delegation:
+Relevant `.vdgg-target` keys for Step 7 and legacy step delegation when no Formation is selected:
 
 ```bash
 # External review command. Must exit 0 to pass. Use a different vendor.

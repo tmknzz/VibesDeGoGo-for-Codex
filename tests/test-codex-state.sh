@@ -9,6 +9,7 @@ trap 'rm -rf "$TMPDIR_VDGG"' EXIT
 
 cd "$TMPDIR_VDGG" || exit 1
 export VDGG_CWD="$TMPDIR_VDGG"
+export VDGG_CONFIG_DIR="$TMPDIR_VDGG/user-config"
 git init -q
 git config user.email "vdgg-test@example.com"
 git config user.name "VDGG Test"
@@ -27,6 +28,8 @@ ID=$(vdgg_get_id)
 assert_ne "" "$ID" "Codex vdgg_state_init creates an id"
 assert_file_exists ".codex/.vdgg-active" "Codex active file exists"
 assert_file_exists ".codex/.vdgg-state-${ID}" "Codex state file exists"
+FORMATION_DEFAULT=$(grep '^formation=' ".codex/.vdgg-state-${ID}" | cut -d= -f2-)
+assert_eq "" "$FORMATION_DEFAULT" "Codex init without formation preserves legacy mode"
 
 RAND="${ID##*-}"
 assert_eq "4" "${#RAND}" "Codex id random part is 4 chars (parity with Claude)"
@@ -92,6 +95,131 @@ assert_file_not_exists ".codex/.vdgg-active" "Codex clear removes active file"
 assert_file_not_exists ".codex/.vdgg-state-${ID}" "Codex clear removes state file"
 assert_file_not_exists ".codex/.vdgg-review-sentinel-${ID}-1" "Codex clear removes review sentinels"
 
+# Formation: complete Step-to-AI mappings live outside the repository, are
+# validated without sourcing, and persist in state across transitions.
+mkdir -p "$VDGG_CONFIG_DIR/formations" "$VDGG_CONFIG_DIR/executors" "$TMPDIR_VDGG/bin"
+EXECUTOR="$TMPDIR_VDGG/bin/test-executor"
+cat > "$EXECUTOR" <<'EOF'
+#!/bin/sh
+if [ "$VDGG_EXECUTOR_STEP" = "STEP_0_GRILL_AI" ]; then
+  cat > "$VDGG_EXECUTOR_OUTPUT" <<'RESULT'
+## Goal
+goal
+## Constraints
+constraints
+## Acceptance criteria
+acceptance
+## Decisions
+decisions
+## Unresolved questions
+none
+RESULT
+else
+  printf 'formation=%s\nai=%s\nstep=%s\ninput=%s\n' \
+    "$VDGG_EXECUTOR_FORMATION" "$VDGG_EXECUTOR_AI" \
+    "$VDGG_EXECUTOR_STEP" "$VDGG_EXECUTOR_INPUT" > "$VDGG_EXECUTOR_OUTPUT"
+fi
+EOF
+chmod +x "$EXECUTOR"
+printf 'COMMAND=%s\n' "$EXECUTOR" > "$VDGG_CONFIG_DIR/executors/qwen.conf"
+cat > "$VDGG_CONFIG_DIR/formations/balanced.conf" <<'EOF'
+STEP_0_AI=inline
+STEP_1_AI=inline
+STEP_2_AI=inline
+STEP_3_AI=qwen
+STEP_4_AI=qwen
+STEP_5_AI=inline
+STEP_6_AI=qwen
+STEP_6R_AI=inline
+STEP_7_AI=qwen
+STEP_8_AI=inline
+STEP_9_AI=inline
+STEP_0_GRILL_AI=qwen
+EOF
+
+vdgg_formation_preflight balanced >/tmp/vdgg-test-formation-preflight.out 2>/tmp/vdgg-test-formation-preflight.err
+PREFLIGHT_RC=$?
+assert_exit_code 0 "$PREFLIGHT_RC" "Codex accepts a complete trusted formation"
+RESOLVED=$(vdgg_formation_resolve STEP_6_AI balanced)
+assert_eq "qwen" "$RESOLVED" "Codex resolves a Step AI from an explicit formation"
+
+vdgg_state_init --formation balanced >/tmp/vdgg-test-formation-init.out 2>/tmp/vdgg-test-formation-init.err
+IDF=$(vdgg_get_id)
+FORMATION_STORED=$(grep '^formation=' ".codex/.vdgg-state-${IDF}" | cut -d= -f2-)
+assert_eq "balanced" "$FORMATION_STORED" "Codex stores the selected formation in state"
+vdgg_state_advance 2 requirements >/dev/null 2>&1
+FORMATION_AFTER_ADVANCE=$(grep '^formation=' ".codex/.vdgg-state-${IDF}" | cut -d= -f2-)
+assert_eq "balanced" "$FORMATION_AFTER_ADVANCE" "Codex preserves formation across state writes"
+
+printf 'implement task\n' > "$TMPDIR_VDGG/executor-input.md"
+vdgg_executor_run STEP_6_AI "$TMPDIR_VDGG/executor-input.md" "$TMPDIR_VDGG/executor-output.md" \
+  >/tmp/vdgg-test-executor-run.out 2>/tmp/vdgg-test-executor-run.err
+EXECUTOR_RC=$?
+assert_exit_code 0 "$EXECUTOR_RC" "Codex runs a validated executor directly"
+EXECUTOR_OUTPUT=$(cat "$TMPDIR_VDGG/executor-output.md")
+assert_contains "$EXECUTOR_OUTPUT" "formation=balanced" "Codex passes formation to executor"
+assert_contains "$EXECUTOR_OUTPUT" "ai=qwen" "Codex passes AI name to executor"
+assert_contains "$EXECUTOR_OUTPUT" "step=STEP_6_AI" "Codex passes Step key to executor"
+
+vdgg_executor_run STEP_0_GRILL_AI "$TMPDIR_VDGG/executor-input.md" "$TMPDIR_VDGG/grill-output.md" \
+  >/tmp/vdgg-test-grill-run.out 2>/tmp/vdgg-test-grill-run.err
+GRILL_RC=$?
+assert_exit_code 0 "$GRILL_RC" "Codex accepts structured Grill Me output"
+vdgg_grill_validate_output "$TMPDIR_VDGG/grill-output.md" >/dev/null 2>&1
+GRILL_VALIDATE_RC=$?
+assert_exit_code 0 "$GRILL_VALIDATE_RC" "Codex validates the five Grill Me handoff headings"
+vdgg_state_clear >/dev/null 2>&1
+
+# Invalid formations and unavailable executors fail before state is armed.
+sed '/STEP_9_AI=/d' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/missing.conf"
+vdgg_state_init --formation missing >/tmp/vdgg-test-formation-missing.out 2>/tmp/vdgg-test-formation-missing.err
+MISSING_RC=$?
+assert_exit_code 1 "$MISSING_RC" "Codex rejects a formation with a missing Step"
+assert_file_not_exists ".codex/.vdgg-active" "Codex does not arm state for an invalid formation"
+
+sed 's/STEP_6_AI=qwen/STEP_6_AI=unknown/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/unknown.conf"
+vdgg_state_init --formation unknown >/tmp/vdgg-test-formation-unknown.out 2>/tmp/vdgg-test-formation-unknown.err
+UNKNOWN_RC=$?
+assert_exit_code 1 "$UNKNOWN_RC" "Codex rejects an unknown AI"
+assert_file_not_exists ".codex/.vdgg-active" "Codex keeps state unarmed for an unknown AI"
+
+printf 'COMMAND=%s\n' "$TMPDIR_VDGG/bin/not-executable" > "$VDGG_CONFIG_DIR/executors/broken.conf"
+sed 's/STEP_7_AI=qwen/STEP_7_AI=broken/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/broken.conf"
+vdgg_formation_preflight broken >/tmp/vdgg-test-formation-broken.out 2>/tmp/vdgg-test-formation-broken.err
+BROKEN_RC=$?
+assert_exit_code 1 "$BROKEN_RC" "Codex rejects a non-executable executor command"
+
+cat > "$TMPDIR_VDGG/bad-grill.md" <<'EOF'
+## Goal
+goal
+## Transcript
+must not cross the handoff
+EOF
+vdgg_grill_validate_output "$TMPDIR_VDGG/bad-grill.md" >/tmp/vdgg-test-grill-bad.out 2>/tmp/vdgg-test-grill-bad.err
+BAD_GRILL_RC=$?
+assert_exit_code 1 "$BAD_GRILL_RC" "Codex rejects Grill Me transcript leakage headings"
+
+vdgg_state_init --formation '../balanced' >/tmp/vdgg-test-formation-name.out 2>/tmp/vdgg-test-formation-name.err
+NAME_RC=$?
+assert_exit_code 1 "$NAME_RC" "Codex rejects an unsafe formation name"
+assert_file_not_exists ".codex/.vdgg-active" "Codex does not arm state for an unsafe formation name"
+
+FAIL_EXECUTOR="$TMPDIR_VDGG/bin/fail-executor"
+printf '#!/bin/sh\nexit 7\n' > "$FAIL_EXECUTOR"
+chmod +x "$FAIL_EXECUTOR"
+printf 'COMMAND=%s\n' "$FAIL_EXECUTOR" > "$VDGG_CONFIG_DIR/executors/failing.conf"
+sed 's/STEP_6_AI=qwen/STEP_6_AI=failing/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/failing.conf"
+vdgg_state_init --formation failing >/dev/null 2>&1
+IDFAIL=$(vdgg_get_id)
+vdgg_executor_run STEP_6_AI "$TMPDIR_VDGG/executor-input.md" \
+  >/tmp/vdgg-test-executor-fail.out 2>/tmp/vdgg-test-executor-fail.err
+FAIL_EXECUTOR_RC=$?
+assert_exit_code 7 "$FAIL_EXECUTOR_RC" "Codex propagates executor failure without fallback"
+assert_file_exists ".codex/.vdgg-state-${IDFAIL}" "Codex preserves state after executor failure"
+FAIL_STEP=$(grep '^step=' ".codex/.vdgg-state-${IDFAIL}" | cut -d= -f2)
+assert_eq "1" "$FAIL_STEP" "Codex does not advance state after executor failure"
+vdgg_state_clear >/dev/null 2>&1
+
 # Parity: 8 -> 5 resets loop_count and clears the previous task's scope.
 vdgg_state_init >/tmp/vdgg-test-codex-initb.out 2>/tmp/vdgg-test-codex-initb.err
 IDB=$(vdgg_get_id)
@@ -152,11 +280,13 @@ vdgg_state_clear >/dev/null 2>&1
 
 # zsh regression: `local path` would empty $PATH when sourced into zsh.
 if command -v zsh >/dev/null 2>&1; then
-    zsh -c "cd '$TMPDIR_VDGG' && export VDGG_CWD='$TMPDIR_VDGG' && source '$ROOT/.agents/skills/vibesdegogo/scripts/vdgg-state.sh' && vdgg_state_init && vdgg_state_advance 2 requirements && vdgg_state_advance 3 investigating && vdgg_state_advance 4 planning && vdgg_state_advance 5 task-selected && vdgg_task_begin 'TZ: zsh probe' functions/index.js" >/tmp/vdgg-test-codex-zsh.out 2>/tmp/vdgg-test-codex-zsh.err
+    zsh -c "cd '$TMPDIR_VDGG' && export VDGG_CWD='$TMPDIR_VDGG' VDGG_CONFIG_DIR='$VDGG_CONFIG_DIR' && source '$ROOT/.agents/skills/vibesdegogo/scripts/vdgg-state.sh' && vdgg_state_init --formation balanced && vdgg_state_advance 2 requirements && vdgg_state_advance 3 investigating && vdgg_state_advance 4 planning && vdgg_state_advance 5 task-selected && vdgg_task_begin 'TZ: zsh probe' functions/index.js" >/tmp/vdgg-test-codex-zsh.out 2>/tmp/vdgg-test-codex-zsh.err
     ZSH_RC=$?
-    assert_exit_code 0 "$ZSH_RC" "Codex helpers work when sourced into zsh"
+    assert_exit_code 0 "$ZSH_RC" "Codex formation helpers work when sourced into zsh"
     IDZ=$(cat .codex/.vdgg-active)
     assert_file_exists ".codex/.vdgg-task-allowlist-${IDZ}-0" "zsh vdgg_task_begin creates allowlist"
+    ZSH_FORMATION=$(grep '^formation=' ".codex/.vdgg-state-${IDZ}" | cut -d= -f2-)
+    assert_eq "balanced" "$ZSH_FORMATION" "zsh state preserves formation"
     vdgg_state_clear >/dev/null 2>&1
 fi
 

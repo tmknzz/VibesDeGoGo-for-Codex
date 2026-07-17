@@ -11,6 +11,7 @@ if [ -z "${VDGG_CWD:-}" ]; then
 fi
 VDGG_STATE_DIR="${VDGG_STATE_DIR:-${VDGG_CWD}/.codex}"
 VDGG_TASKS_DIR="${VDGG_TASKS_DIR:-${VDGG_CWD}/tasks/vdgg}"
+VDGG_CONFIG_DIR="${VDGG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/vdgg}"
 
 _vdgg_generate_id() {
   local timestamp random
@@ -133,8 +134,234 @@ EOF
   echo "vdgg-state: appended VibesDeGoGo! patterns to ${gitignore}" >&2
 }
 
+_vdgg_formation_keys() {
+  printf '%s\n' \
+    STEP_0_AI STEP_1_AI STEP_2_AI STEP_3_AI STEP_4_AI STEP_5_AI \
+    STEP_6_AI STEP_6R_AI STEP_7_AI STEP_8_AI STEP_9_AI STEP_0_GRILL_AI
+}
+
+_vdgg_name_is_safe() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+}
+
+_vdgg_step_key_is_valid() {
+  case "$1" in
+    STEP_0_AI|STEP_1_AI|STEP_2_AI|STEP_3_AI|STEP_4_AI|STEP_5_AI|STEP_6_AI|STEP_6R_AI|STEP_7_AI|STEP_8_AI|STEP_9_AI|STEP_0_GRILL_AI) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_vdgg_formation_file() {
+  printf '%s/formations/%s.conf\n' "$VDGG_CONFIG_DIR" "$1"
+}
+
+_vdgg_executor_file() {
+  printf '%s/executors/%s.conf\n' "$VDGG_CONFIG_DIR" "$1"
+}
+
+_vdgg_validate_formation_file() {
+  local formation="$1" file line key value seen="" required
+  _vdgg_name_is_safe "$formation" || {
+    echo "vdgg-formation: invalid formation name: $formation" >&2
+    return 1
+  }
+  file=$(_vdgg_formation_file "$formation")
+  [ -f "$file" ] || {
+    echo "vdgg-formation: formation not found: $file" >&2
+    return 1
+  }
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+      *=*) ;;
+      *) echo "vdgg-formation: invalid line in $file: $line" >&2; return 1 ;;
+    esac
+    key=${line%%=*}
+    value=${line#*=}
+    _vdgg_step_key_is_valid "$key" || {
+      echo "vdgg-formation: unknown key in $file: $key" >&2
+      return 1
+    }
+    _vdgg_name_is_safe "$value" || {
+      echo "vdgg-formation: invalid AI name for $key: $value" >&2
+      return 1
+    }
+    case "
+$seen
+" in
+      *"
+$key
+"*) echo "vdgg-formation: duplicate key in $file: $key" >&2; return 1 ;;
+    esac
+    seen="${seen}${seen:+
+}${key}"
+  done < "$file"
+
+  for required in $(_vdgg_formation_keys); do
+    printf '%s\n' "$seen" | grep -qxF "$required" || {
+      echo "vdgg-formation: missing key in $file: $required" >&2
+      return 1
+    }
+  done
+}
+
+_vdgg_formation_value() {
+  local formation="$1" step_key="$2" file
+  file=$(_vdgg_formation_file "$formation")
+  grep -m1 "^${step_key}=" "$file" | cut -d= -f2-
+}
+
+_vdgg_executor_command() {
+  local ai="$1" file line key command="" seen=0
+  _vdgg_name_is_safe "$ai" || {
+    echo "vdgg-formation: invalid AI name: $ai" >&2
+    return 1
+  }
+  file=$(_vdgg_executor_file "$ai")
+  [ -f "$file" ] || {
+    echo "vdgg-formation: executor not found for $ai: $file" >&2
+    return 1
+  }
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+      *=*) ;;
+      *) echo "vdgg-formation: invalid line in $file: $line" >&2; return 1 ;;
+    esac
+    key=${line%%=*}
+    [ "$key" = "COMMAND" ] || {
+      echo "vdgg-formation: unknown key in $file: $key" >&2
+      return 1
+    }
+    [ "$seen" -eq 0 ] || {
+      echo "vdgg-formation: duplicate COMMAND in $file" >&2
+      return 1
+    }
+    command=${line#*=}
+    seen=1
+  done < "$file"
+  [ -n "$command" ] || {
+    echo "vdgg-formation: missing COMMAND in $file" >&2
+    return 1
+  }
+  case "$command" in
+    /*) ;;
+    *) echo "vdgg-formation: COMMAND must be an absolute path: $command" >&2; return 1 ;;
+  esac
+  [ -f "$command" ] && [ -x "$command" ] || {
+    echo "vdgg-formation: COMMAND is not executable: $command" >&2
+    return 1
+  }
+  printf '%s\n' "$command"
+}
+
+vdgg_formation_current() {
+  local state_file formation=""
+  state_file=$(_vdgg_get_state_file 2>/dev/null || true)
+  if [ -n "$state_file" ] && [ -f "$state_file" ]; then
+    formation=$(grep '^formation=' "$state_file" | cut -d= -f2- || true)
+    printf '%s\n' "$formation"
+    return 0
+  fi
+  printf '%s\n' "${VDGG_FORMATION:-}"
+}
+
+vdgg_formation_preflight() {
+  local formation="${1:-}" step_key ai
+  [ -n "$formation" ] || formation=$(vdgg_formation_current)
+  [ -n "$formation" ] || {
+    echo "vdgg-formation: no formation selected" >&2
+    return 1
+  }
+  _vdgg_validate_formation_file "$formation" || return 1
+  for step_key in $(_vdgg_formation_keys); do
+    ai=$(_vdgg_formation_value "$formation" "$step_key")
+    [ "$ai" = "inline" ] || _vdgg_executor_command "$ai" >/dev/null || return 1
+  done
+}
+
+vdgg_formation_resolve() {
+  local step_key="${1:-}" formation="${2:-}"
+  _vdgg_step_key_is_valid "$step_key" || {
+    echo "vdgg-formation: invalid step key: $step_key" >&2
+    return 1
+  }
+  [ -n "$formation" ] || formation=$(vdgg_formation_current)
+  vdgg_formation_preflight "$formation" || return 1
+  _vdgg_formation_value "$formation" "$step_key"
+}
+
+vdgg_grill_validate_output() {
+  local output_file="${1:-}" headings expected
+  [ -s "$output_file" ] || {
+    echo "vdgg-formation: Grill Me output is missing or empty: $output_file" >&2
+    return 1
+  }
+  headings=$(grep '^## ' "$output_file" || true)
+  expected=$(printf '%s\n' \
+    '## Goal' \
+    '## Constraints' \
+    '## Acceptance criteria' \
+    '## Decisions' \
+    '## Unresolved questions')
+  [ "$headings" = "$expected" ] || {
+    echo "vdgg-formation: Grill Me output must contain only the five required level-2 headings in order" >&2
+    return 1
+  }
+}
+
+vdgg_executor_run() {
+  local step_key="${1:-}" input_file="${2:-}" output_file="${3:-}"
+  local formation ai command
+  _vdgg_step_key_is_valid "$step_key" || {
+    echo "vdgg-formation: invalid step key: $step_key" >&2
+    return 1
+  }
+  [ -f "$input_file" ] || {
+    echo "vdgg-formation: executor input not found: $input_file" >&2
+    return 1
+  }
+  if [ "$step_key" = "STEP_0_GRILL_AI" ] && [ -z "$output_file" ]; then
+    echo "vdgg-formation: Grill Me executor requires an output file" >&2
+    return 1
+  fi
+  if [ -n "$output_file" ] && [ -e "$output_file" ]; then
+    echo "vdgg-formation: executor output already exists: $output_file" >&2
+    return 1
+  fi
+  formation=$(vdgg_formation_current)
+  ai=$(vdgg_formation_resolve "$step_key" "$formation") || return 1
+  [ "$ai" != "inline" ] || {
+    echo "vdgg-formation: $step_key is assigned to inline; no external executor was run" >&2
+    return 1
+  }
+  command=$(_vdgg_executor_command "$ai") || return 1
+  VDGG_EXECUTOR_FORMATION="$formation" \
+  VDGG_EXECUTOR_AI="$ai" \
+  VDGG_EXECUTOR_STEP="$step_key" \
+  VDGG_EXECUTOR_INPUT="$input_file" \
+  VDGG_EXECUTOR_OUTPUT="$output_file" \
+    "$command" || return $?
+  if [ -n "$output_file" ] && [ ! -s "$output_file" ]; then
+    echo "vdgg-formation: executor did not create output: $output_file" >&2
+    return 1
+  fi
+  if [ "$step_key" = "STEP_0_GRILL_AI" ]; then
+    vdgg_grill_validate_output "$output_file" || return 1
+  fi
+}
+
 vdgg_state_init() {
-  local id active_file state_file tasks_dir
+  local id active_file state_file tasks_dir formation="${VDGG_FORMATION:-}"
+  if [ "$#" -gt 0 ]; then
+    [ "$#" -eq 2 ] && [ "$1" = "--formation" ] && [ -n "$2" ] || {
+      echo "vdgg_state_init: usage: vdgg_state_init [--formation NAME]" >&2
+      return 1
+    }
+    formation=$2
+  fi
+  [ -z "$formation" ] || vdgg_formation_preflight "$formation" || return 1
   id=$(_vdgg_generate_id)
   active_file=$(_vdgg_active_file)
   state_file=$(_vdgg_state_file_for_id "$id")
@@ -160,6 +387,7 @@ loop_count=0
 current_task=
 task_allowlist_file=
 task_base_ref=
+formation=${formation}
 vdgg_id=${id}
 last_updated=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
@@ -170,7 +398,7 @@ vdgg_state_read() {
   local state_file
   state_file=$(_vdgg_get_state_file || true)
   if [ -z "${state_file:-}" ] || [ ! -f "$state_file" ]; then
-    printf 'step=0\nphase=none\nloop_count=0\ncurrent_task=\nvdgg_id=\nlast_updated=\n'
+    printf 'step=0\nphase=none\nloop_count=0\ncurrent_task=\nformation=\nvdgg_id=\nlast_updated=\n'
     return 1
   fi
   cat "$state_file"
@@ -179,7 +407,7 @@ vdgg_state_read() {
 vdgg_state_write() {
   local new_step="$1" new_phase="$2" new_loop_count="$3" new_current_task="${4:-}"
   local new_task_allowlist_file="${5:-}" new_task_base_ref="${6:-}"
-  local state_file current_step id
+  local state_file current_step id formation
 
   [[ "$new_step" =~ ^[0-9]+$ ]] || { echo "vdgg-state: invalid step" >&2; return 1; }
   case "$new_phase" in
@@ -208,6 +436,7 @@ vdgg_state_write() {
   elif [ -z "$new_task_base_ref" ]; then
     new_task_base_ref=$(grep '^task_base_ref=' "$state_file" | cut -d= -f2- || true)
   fi
+  formation=$(grep '^formation=' "$state_file" | cut -d= -f2- || true)
   id=$(_vdgg_get_active_id)
   cat > "$state_file" <<EOF
 step=${new_step}
@@ -216,6 +445,7 @@ loop_count=${new_loop_count}
 current_task=${new_current_task}
 task_allowlist_file=${new_task_allowlist_file}
 task_base_ref=${new_task_base_ref}
+formation=${formation}
 vdgg_id=${id}
 last_updated=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF

@@ -25,6 +25,49 @@ bash + jq. No account, keys, or telemetry. MIT.
    (A PR is GitHub's confirmation page for a proposed change: nothing lands
    on the main code until you approve the merge.)
 
+## Per-Step AI Formations
+
+A named Formation can assign any AI to each Step. Trusted configuration lives outside the repository under `~/.config/vdgg`:
+
+```text
+~/.config/vdgg/
+  formations/local-balanced.conf
+  executors/qwen.conf
+  executors/gemma.conf
+```
+
+Every Step must be explicit; omitted assignments never trigger an implicit fallback.
+
+```ini
+STEP_0_AI=inline
+STEP_1_AI=inline
+STEP_2_AI=inline
+STEP_3_AI=inline
+STEP_4_AI=inline
+STEP_5_AI=inline
+STEP_6_AI=qwen
+STEP_6R_AI=inline
+STEP_7_AI=gemma
+STEP_8_AI=inline
+STEP_9_AI=inline
+STEP_0_GRILL_AI=qwen
+```
+
+Each executor file contains only an absolute path to a no-argument wrapper. VDGG executes that file directly rather than evaluating a shell command string.
+
+```ini
+# ~/.config/vdgg/executors/qwen.conf
+COMMAND=/Users/you/.local/bin/vdgg-qwen
+```
+
+When you select a Formation, Step 1 pins it in state:
+
+```bash
+vdgg_state_init --formation local-balanced
+```
+
+The wrapper receives `VDGG_EXECUTOR_FORMATION`, `VDGG_EXECUTOR_AI`, `VDGG_EXECUTOR_STEP`, `VDGG_EXECUTOR_INPUT`, and `VDGG_EXECUTOR_OUTPUT`. Executor failure preserves state and stops; it never silently falls back to `inline`. With no Formation, the historical inline behavior and `.vdgg-target` executor settings remain unchanged.
+
 ## Layout
 
 ```text

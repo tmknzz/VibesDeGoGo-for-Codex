@@ -61,6 +61,17 @@ The executor receives `VDGG_EXECUTOR_FORMATION`, `VDGG_EXECUTOR_AI`, `VDGG_EXECU
 
 With no Formation selected, all historical behavior remains active, including the optional `.vdgg-target` `STEP3_EXECUTOR_COMMAND`, `STEP4_EXECUTOR_COMMAND`, `STEP6_EXECUTOR_COMMAND`, and `REVIEW_COMMAND` keys.
 
+### Local llama-server executors
+
+When a Formation assigns a Step to an executor backed by a locally-hosted `llama-server` (llama.cpp), VDGG ships two helpers so the server configuration lives in one declarative file instead of being scattered across `~/.zshrc`, launchd plists, and executor wrapper scripts:
+
+- [`references/servers-conf.md`](references/servers-conf.md) — schema and CLI contract for `${VDGG_CONFIG_DIR:-$HOME/.config/vdgg}/servers.conf` (source of truth).
+- [`references/servers.conf.example`](references/servers.conf.example) — a copy-and-edit fixture.
+- [`scripts/vdgg-llm-start.sh`](scripts/vdgg-llm-start.sh) — a thin wrapper: `--check`, `--dry-run <id>`, `<id>` (exec).
+- [`references/local-inference-setup.md`](references/local-inference-setup.md) — first-run walkthrough for macOS launchd (tested) and Linux systemd (schema-compatible, awaiting community verification).
+
+Executor `COMMAND=` lines can then call `vdgg-llm-start <id>` through a wrapper that sends the actual request to `http://127.0.0.1:<port>`. Only the port/api key move; the executor script itself no longer hard-codes them.
+
 ## Important Codex Differences
 
 - State lives in `.codex/.vdgg-active` and `.codex/.vdgg-state-{id}`.

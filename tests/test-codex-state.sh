@@ -123,18 +123,12 @@ EOF
 chmod +x "$EXECUTOR"
 printf 'COMMAND=%s\n' "$EXECUTOR" > "$VDGG_CONFIG_DIR/executors/qwen.conf"
 cat > "$VDGG_CONFIG_DIR/formations/balanced.conf" <<'EOF'
-STEP_0_AI=inline
-STEP_1_AI=inline
-STEP_2_AI=inline
-STEP_3_AI=qwen
-STEP_4_AI=qwen
-STEP_5_AI=inline
-STEP_6_AI=qwen
-STEP_6R_AI=inline
-STEP_7_AI=qwen
-STEP_8_AI=inline
-STEP_9_AI=inline
-STEP_0_GRILL_AI=qwen
+# friendly syntax: unlisted seats stay inline
+3: qwen
+4: qwen
+6: qwen
+7: qwen
+grill: qwen
 EOF
 
 vdgg_formation_preflight balanced >/tmp/vdgg-test-formation-preflight.out 2>/tmp/vdgg-test-formation-preflight.err
@@ -142,6 +136,10 @@ PREFLIGHT_RC=$?
 assert_exit_code 0 "$PREFLIGHT_RC" "Codex accepts a complete trusted formation"
 RESOLVED=$(vdgg_formation_resolve STEP_6_AI balanced)
 assert_eq "qwen" "$RESOLVED" "Codex resolves a Step AI from an explicit formation"
+RESOLVED_UNLISTED=$(vdgg_formation_resolve STEP_0_AI balanced)
+assert_eq "inline" "$RESOLVED_UNLISTED" "Codex defaults an unlisted seat to inline"
+RESOLVED_6R=$(vdgg_formation_resolve STEP_6R_AI balanced)
+assert_eq "inline" "$RESOLVED_6R" "Codex defaults unlisted 6R to inline"
 
 vdgg_state_init --formation balanced >/tmp/vdgg-test-formation-init.out 2>/tmp/vdgg-test-formation-init.err
 IDF=$(vdgg_get_id)
@@ -170,21 +168,94 @@ GRILL_VALIDATE_RC=$?
 assert_exit_code 0 "$GRILL_VALIDATE_RC" "Codex validates the five Grill Me handoff headings"
 vdgg_state_clear >/dev/null 2>&1
 
-# Invalid formations and unavailable executors fail before state is armed.
-sed '/STEP_9_AI=/d' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/missing.conf"
-vdgg_state_init --formation missing >/tmp/vdgg-test-formation-missing.out 2>/tmp/vdgg-test-formation-missing.err
-MISSING_RC=$?
-assert_exit_code 1 "$MISSING_RC" "Codex rejects a formation with a missing Step"
+# Wildcard "*" assigns the non-interactive seats; an explicit seat wins.
+cat > "$VDGG_CONFIG_DIR/formations/wild.conf" <<'EOF'
+*: qwen
+6: inline
+EOF
+RESOLVED_WILD=$(vdgg_formation_resolve STEP_3_AI wild)
+assert_eq "qwen" "$RESOLVED_WILD" "Codex expands * to the non-interactive seats"
+RESOLVED_WILD6=$(vdgg_formation_resolve STEP_6_AI wild)
+assert_eq "inline" "$RESOLVED_WILD6" "Codex lets an explicit seat override *"
+RESOLVED_WILD0=$(vdgg_formation_resolve STEP_0_AI wild)
+assert_eq "inline" "$RESOLVED_WILD0" "Codex keeps seat 0 out of * expansion"
+
+# Builtin claude/codex values resolve to the bundled wrappers and carry
+# model/effort tokens through to the executor environment.
+cat > "$VDGG_CONFIG_DIR/formations/mixed.conf" <<'EOF'
+6: claude sonnet low
+6R: claude high
+7: codex xhigh
+EOF
+vdgg_formation_preflight mixed >/tmp/vdgg-test-formation-mixed.out 2>/tmp/vdgg-test-formation-mixed.err
+MIXED_RC=$?
+assert_exit_code 0 "$MIXED_RC" "Codex accepts builtin claude/codex with model/effort tokens"
+
+REAL_SCRIPT_DIR="$_VDGG_SCRIPT_DIR"
+mkdir -p "$TMPDIR_VDGG/fakebundle"
+for fake in vdgg-exec-claude.sh vdgg-exec-codex.sh; do
+  cat > "$TMPDIR_VDGG/fakebundle/$fake" <<'EOF'
+#!/bin/sh
+printf 'ai=%s model=%s effort=%s\n' \
+  "$VDGG_EXECUTOR_AI" "$VDGG_EXECUTOR_MODEL" "$VDGG_EXECUTOR_EFFORT" > "$VDGG_EXECUTOR_OUTPUT"
+EOF
+  chmod +x "$TMPDIR_VDGG/fakebundle/$fake"
+done
+_VDGG_SCRIPT_DIR="$TMPDIR_VDGG/fakebundle"
+vdgg_state_init --formation mixed >/dev/null 2>&1
+vdgg_executor_run STEP_6_AI "$TMPDIR_VDGG/executor-input.md" "$TMPDIR_VDGG/mixed-6.md" >/dev/null 2>&1
+assert_contains "$(cat "$TMPDIR_VDGG/mixed-6.md")" "ai=claude model=sonnet effort=low" "Codex splits 'claude sonnet low' into model and effort"
+vdgg_executor_run STEP_6R_AI "$TMPDIR_VDGG/executor-input.md" "$TMPDIR_VDGG/mixed-6r.md" >/dev/null 2>&1
+assert_contains "$(cat "$TMPDIR_VDGG/mixed-6r.md")" "ai=claude model= effort=high" "Codex reads 'claude high' as effort with default model"
+vdgg_state_clear >/dev/null 2>&1
+_VDGG_SCRIPT_DIR="$REAL_SCRIPT_DIR"
+
+# Invalid formations fail before state is armed.
+printf '1: qwen\n' > "$VDGG_CONFIG_DIR/formations/seat1.conf"
+vdgg_formation_preflight seat1 >/tmp/vdgg-test-formation-seat1.out 2>/tmp/vdgg-test-formation-seat1.err
+SEAT1_RC=$?
+assert_exit_code 1 "$SEAT1_RC" "Codex rejects an inline-only seat assignment"
+
+printf '0: codex\n' > "$VDGG_CONFIG_DIR/formations/seat0.conf"
+vdgg_formation_preflight seat0 >/tmp/vdgg-test-formation-seat0.out 2>/tmp/vdgg-test-formation-seat0.err
+SEAT0_RC=$?
+assert_exit_code 1 "$SEAT0_RC" "Codex rejects a builtin on the interactive seat 0"
+
+printf '6: qwen low\n' > "$VDGG_CONFIG_DIR/formations/baretok.conf"
+vdgg_formation_preflight baretok >/tmp/vdgg-test-formation-baretok.out 2>/tmp/vdgg-test-formation-baretok.err
+BARETOK_RC=$?
+assert_exit_code 1 "$BARETOK_RC" "Codex rejects tokens on a user-defined executor"
+
+printf '6: claude so/nnet\n' > "$VDGG_CONFIG_DIR/formations/badtok.conf"
+vdgg_formation_preflight badtok >/tmp/vdgg-test-formation-badtok.out 2>/tmp/vdgg-test-formation-badtok.err
+BADTOK_RC=$?
+assert_exit_code 1 "$BADTOK_RC" "Codex rejects an unsafe model token"
+
+printf '6: claude --dangerously-skip-permissions\n' > "$VDGG_CONFIG_DIR/formations/flagtok.conf"
+vdgg_formation_preflight flagtok >/tmp/vdgg-test-formation-flagtok.out 2>/tmp/vdgg-test-formation-flagtok.err
+FLAGTOK_RC=$?
+assert_exit_code 1 "$FLAGTOK_RC" "Codex rejects a leading-dash token (flag injection)"
+
+printf '3: qwen\n3: qwen\n' > "$VDGG_CONFIG_DIR/formations/dup.conf"
+vdgg_formation_preflight dup >/tmp/vdgg-test-formation-dup.out 2>/tmp/vdgg-test-formation-dup.err
+DUP_RC=$?
+assert_exit_code 1 "$DUP_RC" "Codex rejects a duplicate seat"
+
+printf 'STEP_3_AI=qwen\n' > "$VDGG_CONFIG_DIR/formations/oldfmt.conf"
+vdgg_state_init --formation oldfmt >/tmp/vdgg-test-formation-oldfmt.out 2>/tmp/vdgg-test-formation-oldfmt.err
+OLDFMT_RC=$?
+assert_exit_code 1 "$OLDFMT_RC" "Codex rejects the old 13-key format"
+assert_contains "$(cat /tmp/vdgg-test-formation-oldfmt.err)" "old KEY=VALUE format" "Codex explains the old-format rewrite"
 assert_file_not_exists ".codex/.vdgg-active" "Codex does not arm state for an invalid formation"
 
-sed 's/STEP_6_AI=qwen/STEP_6_AI=unknown/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/unknown.conf"
+sed 's/^6: qwen/6: unknown/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/unknown.conf"
 vdgg_state_init --formation unknown >/tmp/vdgg-test-formation-unknown.out 2>/tmp/vdgg-test-formation-unknown.err
 UNKNOWN_RC=$?
 assert_exit_code 1 "$UNKNOWN_RC" "Codex rejects an unknown AI"
 assert_file_not_exists ".codex/.vdgg-active" "Codex keeps state unarmed for an unknown AI"
 
 printf 'COMMAND=%s\n' "$TMPDIR_VDGG/bin/not-executable" > "$VDGG_CONFIG_DIR/executors/broken.conf"
-sed 's/STEP_7_AI=qwen/STEP_7_AI=broken/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/broken.conf"
+sed 's/^7: qwen/7: broken/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/broken.conf"
 vdgg_formation_preflight broken >/tmp/vdgg-test-formation-broken.out 2>/tmp/vdgg-test-formation-broken.err
 BROKEN_RC=$?
 assert_exit_code 1 "$BROKEN_RC" "Codex rejects a non-executable executor command"
@@ -208,7 +279,7 @@ FAIL_EXECUTOR="$TMPDIR_VDGG/bin/fail-executor"
 printf '#!/bin/sh\nexit 7\n' > "$FAIL_EXECUTOR"
 chmod +x "$FAIL_EXECUTOR"
 printf 'COMMAND=%s\n' "$FAIL_EXECUTOR" > "$VDGG_CONFIG_DIR/executors/failing.conf"
-sed 's/STEP_6_AI=qwen/STEP_6_AI=failing/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/failing.conf"
+sed 's/^6: qwen/6: failing/' "$VDGG_CONFIG_DIR/formations/balanced.conf" > "$VDGG_CONFIG_DIR/formations/failing.conf"
 vdgg_state_init --formation failing >/dev/null 2>&1
 IDFAIL=$(vdgg_get_id)
 vdgg_executor_run STEP_6_AI "$TMPDIR_VDGG/executor-input.md" \

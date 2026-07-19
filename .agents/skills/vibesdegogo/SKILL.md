@@ -41,7 +41,7 @@ In quiet mode, omit the chat Step declarations and interim narration. Bash-embed
 
 ### Step AI Formations
 
-A Formation is a named, complete Step-to-AI assignment. Select it before Step 0 with `VDGG_FORMATION=<name>` or an explicit user instruction. Before consultation begins, source `vdgg-state.sh`, run `vdgg_formation_preflight <name>`, and resolve `STEP_0_AI` and `STEP_0_GRILL_AI` with that explicit name. Then pass the same name to `vdgg_state_init --formation <name>` in Step 1. Formation files and executor definitions are trusted user configuration outside the repository:
+A Formation is a named Step-to-AI assignment written as a small hand-editable text file. Select it before Step 0 with `VDGG_FORMATION=<name>` or an explicit user instruction. Before consultation begins, source `vdgg-state.sh`, run `vdgg_formation_preflight <name>`, and resolve `STEP_0_AI` and `STEP_0_GRILL_AI` with that explicit name. Then pass the same name to `vdgg_state_init --formation <name>` in Step 1. Formation files and executor definitions are trusted user configuration outside the repository:
 
 ```text
 ${VDGG_CONFIG_DIR:-$HOME/.config/vdgg}/
@@ -49,7 +49,27 @@ ${VDGG_CONFIG_DIR:-$HOME/.config/vdgg}/
   executors/<ai>.conf
 ```
 
-A Formation must define every key: `STEP_0_AI` through `STEP_9_AI`, plus `STEP_6R_AI` and `STEP_0_GRILL_AI`. `inline` means the current Codex agent. Any other AI name must have an executor file containing one `COMMAND=/absolute/path/to/executable` line. The parser never sources these files and the command is executed directly, not through a shell string.
+The whole file can be one line — delegate every delegable seat to Codex:
+
+```text
+*: codex
+```
+
+Or pick per seat, with an optional model and effort on the builtins:
+
+```text
+3: codex
+6: claude sonnet low
+7: codex high
+grill: qwen-grill
+```
+
+Syntax, one line per delegated seat: `<seat>: <ai> [model] [effort]`.
+
+- Seats: `0`, `3`, `4`, `6`, `6R`, `7`, `grill` (case-insensitive), plus `*` which assigns the non-interactive seats `3, 4, 6, 6R, 7` at once; an explicit seat line wins over `*`. Unlisted seats are `inline` (the current Codex agent). Seats 1, 2, 5, 8, 9 are inline-only and cannot be written.
+- Values: `inline`; the builtins `claude` / `codex`, which run the bundled `scripts/vdgg-exec-claude.sh` / `vdgg-exec-codex.sh` wrappers with optional model and effort tokens — effort is recognized by a closed vocabulary (claude: `low|medium|high`, codex: `minimal|low|medium|high|xhigh`), any other token is the model. Or a bare executor name resolved through `executors/<name>.conf` containing one `COMMAND=/absolute/path/to/executable` line; bare names take no tokens — bake fixed model settings into that command.
+- The bundled builtins are non-interactive, so `0:` and `grill:` reject `claude`/`codex` — those seats need `inline` or a bare executor that can own the conversation. A user-defined `executors/claude.conf` or `executors/codex.conf` overrides the builtin of the same name; the name then behaves as a bare executor — it takes no model/effort tokens, and it becomes eligible for `0:`/`grill:` like any other bare executor.
+- The parser never sources these files and the command is executed directly, not through a shell string. Tokens must start with an alphanumeric so they can never reach an executor's argv as a flag.
 
 When a Formation is selected, resolve the assigned AI before acting in every Step with `vdgg_formation_resolve <STEP_KEY>`. Use `STEP_6R_AI` for reflection and `STEP_0_GRILL_AI` for Grill Me. Then:
 
@@ -57,7 +77,7 @@ When a Formation is selected, resolve the assigned AI before acting in every Ste
 2. External AI: write the smallest sufficient input artifact, output the Delegate line, and call `vdgg_executor_run <STEP_KEY> <input-file> [output-file]`.
 3. Validate the expected artifact before advancing. A non-zero executor result, missing output, unknown AI, or invalid Formation stops the workflow with state unchanged. Never silently fall back to `inline` or a legacy command.
 
-The executor receives `VDGG_EXECUTOR_FORMATION`, `VDGG_EXECUTOR_AI`, `VDGG_EXECUTOR_STEP`, `VDGG_EXECUTOR_INPUT`, and `VDGG_EXECUTOR_OUTPUT`. State transitions, task allowlists, review gates, and commit permissions remain owned by the controlling VDGG session.
+The executor receives `VDGG_EXECUTOR_FORMATION`, `VDGG_EXECUTOR_AI`, `VDGG_EXECUTOR_MODEL`, `VDGG_EXECUTOR_EFFORT`, `VDGG_EXECUTOR_STEP`, `VDGG_EXECUTOR_INPUT`, and `VDGG_EXECUTOR_OUTPUT`. State transitions, task allowlists, review gates, and commit permissions remain owned by the controlling VDGG session.
 
 With no Formation selected, all historical behavior remains active, including the optional `.vdgg-target` `STEP3_EXECUTOR_COMMAND`, `STEP4_EXECUTOR_COMMAND`, `STEP6_EXECUTOR_COMMAND`, and `REVIEW_COMMAND` keys.
 

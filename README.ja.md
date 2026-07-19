@@ -36,21 +36,26 @@ bash と jq のみ。アカウント・鍵・テレメトリなし。MIT。
   executors/gemma.conf
 ```
 
-Formationは全Stepを明示します。省略による暗黙fallbackはありません。
+委譲する席だけを1行ずつ書きます。書かなかった席は inline（現在のエージェント）のまま。`*` は非対話席（3, 4, 6, 6R, 7）への一括指定で、組み込みの `claude` / `codex` には model と effort を任意で付けられます。
 
-```ini
-STEP_0_AI=inline
-STEP_1_AI=inline
-STEP_2_AI=inline
-STEP_3_AI=inline
-STEP_4_AI=inline
-STEP_5_AI=inline
-STEP_6_AI=qwen
-STEP_6R_AI=inline
-STEP_7_AI=gemma
-STEP_8_AI=inline
-STEP_9_AI=inline
-STEP_0_GRILL_AI=qwen
+```text
+# formations/local-balanced.conf
+6: qwen
+7: gemma
+grill: qwen
+```
+
+「委譲できる席は全部 Codex」は1行で書けます。
+
+```text
+*: codex
+```
+
+組み込み語 + model/effort の例:
+
+```text
+6: claude sonnet low
+7: codex high
 ```
 
 各executor設定には、引数なしで起動できる絶対パスのwrapperだけを書きます。shell文字列として評価しません。

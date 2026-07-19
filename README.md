@@ -36,21 +36,26 @@ A named Formation can assign any AI to each Step. Trusted configuration lives ou
   executors/gemma.conf
 ```
 
-Every Step must be explicit; omitted assignments never trigger an implicit fallback.
+One line per delegated seat; unlisted seats stay inline (the current agent). `*` assigns the non-interactive seats (3, 4, 6, 6R, 7) at once, and the builtins `claude` / `codex` take optional model and effort tokens:
 
-```ini
-STEP_0_AI=inline
-STEP_1_AI=inline
-STEP_2_AI=inline
-STEP_3_AI=inline
-STEP_4_AI=inline
-STEP_5_AI=inline
-STEP_6_AI=qwen
-STEP_6R_AI=inline
-STEP_7_AI=gemma
-STEP_8_AI=inline
-STEP_9_AI=inline
-STEP_0_GRILL_AI=qwen
+```text
+# formations/local-balanced.conf
+6: qwen
+7: gemma
+grill: qwen
+```
+
+Delegating every delegable seat to Codex is one line:
+
+```text
+*: codex
+```
+
+Builtins with model/effort:
+
+```text
+6: claude sonnet low
+7: codex high
 ```
 
 Each executor file contains only an absolute path to a no-argument wrapper. VDGG executes that file directly rather than evaluating a shell command string.

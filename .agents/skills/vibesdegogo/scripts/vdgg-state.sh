@@ -12,6 +12,8 @@ fi
 VDGG_STATE_DIR="${VDGG_STATE_DIR:-${VDGG_CWD}/.codex}"
 VDGG_TASKS_DIR="${VDGG_TASKS_DIR:-${VDGG_CWD}/tasks/vdgg}"
 VDGG_CONFIG_DIR="${VDGG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/vdgg}"
+# BASH_SOURCE is bash-only; zsh sets $0 to the sourced file's path instead.
+_VDGG_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 
 _vdgg_generate_id() {
   local timestamp random
@@ -159,8 +161,131 @@ _vdgg_executor_file() {
   printf '%s/executors/%s.conf\n' "$VDGG_CONFIG_DIR" "$1"
 }
 
+# --- Friendly formation syntax ------------------------------------------------
+# One line per delegated seat: "<seat>: <ai> [model] [effort]".
+# Seats: 0, 3, 4, 6, 6R, 7, grill (case-insensitive), plus "*" which assigns
+# the non-interactive seats 3, 4, 6, 6R, 7 at once; an explicit seat line wins
+# over "*" regardless of order. Unlisted seats default to inline.
+# Values: "inline", the builtins "claude"/"codex" (optional model and effort
+# tokens, effort recognized by a per-vendor closed vocabulary), or a bare
+# executor name resolved through executors/<name>.conf as before.
+
+_vdgg_seat_to_key() {
+  case "$1" in
+    0) echo STEP_0_AI ;;
+    3) echo STEP_3_AI ;;
+    4) echo STEP_4_AI ;;
+    6) echo STEP_6_AI ;;
+    6R|6r) echo STEP_6R_AI ;;
+    7) echo STEP_7_AI ;;
+    [Gg][Rr][Ii][Ll][Ll]) echo STEP_0_GRILL_AI ;;
+    *) return 1 ;;
+  esac
+}
+
+_vdgg_key_in_wildcard() {
+  case "$1" in
+    STEP_3_AI|STEP_4_AI|STEP_6_AI|STEP_6R_AI|STEP_7_AI) return 0 ;;
+  esac
+  return 1
+}
+
+# First char must be alphanumeric so a token can never be mistaken for a CLI
+# flag when it reaches an executor's argv.
+_vdgg_token_is_safe() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+# Closed per-vendor effort vocabulary, matched with case patterns (portable
+# across bash and zsh, which does not word-split unquoted expansions).
+_vdgg_is_effort_token() {
+  case "$1" in
+    claude) case "$2" in low|medium|high) return 0 ;; esac ;;
+    codex) case "$2" in minimal|low|medium|high|xhigh) return 0 ;; esac ;;
+  esac
+  return 1
+}
+
+_vdgg_trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s\n' "$s"
+}
+
+# Parse a seat value "<name> [model] [effort]" into _VDGG_SEAT_NAME,
+# _VDGG_SEAT_MODEL, _VDGG_SEAT_EFFORT, enforcing the grammar (token charset,
+# token count, tokens only on the builtins). $2 labels error messages.
+# Single source of truth for the split — validation, preflight, and run time
+# all call this so the interpretation can never drift between them.
+_vdgg_parse_seat_value() {
+  local value="$1" label="$2" tok1 tok2 extra tok
+  _VDGG_SEAT_NAME="" _VDGG_SEAT_MODEL="" _VDGG_SEAT_EFFORT=""
+  IFS=' 	' read -r _VDGG_SEAT_NAME tok1 tok2 extra <<< "$value"
+  [ -n "$_VDGG_SEAT_NAME" ] || {
+    echo "vdgg-formation: empty value for $label" >&2
+    return 1
+  }
+  case "$_VDGG_SEAT_NAME" in
+    inline)
+      [ -z "$tok1" ] || {
+        echo "vdgg-formation: inline takes no extra tokens ($label): $value" >&2
+        return 1
+      }
+      ;;
+    claude|codex)
+      [ -z "$extra" ] || {
+        echo "vdgg-formation: too many tokens for $label: $value" >&2
+        return 1
+      }
+      for tok in "$tok1" "$tok2"; do
+        [ -n "$tok" ] || continue
+        _vdgg_token_is_safe "$tok" || {
+          echo "vdgg-formation: invalid token for $label: $tok" >&2
+          return 1
+        }
+        if [ -z "$_VDGG_SEAT_EFFORT" ] && _vdgg_is_effort_token "$_VDGG_SEAT_NAME" "$tok"; then
+          _VDGG_SEAT_EFFORT="$tok"
+        elif [ -z "$_VDGG_SEAT_MODEL" ]; then
+          _VDGG_SEAT_MODEL="$tok"
+        else
+          echo "vdgg-formation: too many tokens for $label: $value" >&2
+          return 1
+        fi
+      done
+      ;;
+    *)
+      [ -z "$tok1" ] || {
+        echo "vdgg-formation: executor '$_VDGG_SEAT_NAME' takes no model/effort tokens ($label); bake settings into executors/${_VDGG_SEAT_NAME}.conf instead" >&2
+        return 1
+      }
+      _vdgg_name_is_safe "$_VDGG_SEAT_NAME" || {
+        echo "vdgg-formation: invalid AI name for $label: $_VDGG_SEAT_NAME" >&2
+        return 1
+      }
+      ;;
+  esac
+}
+
+_vdgg_check_seat_value() {
+  local key="$1" value="$2"
+  _vdgg_parse_seat_value "$value" "$key" || return 1
+  case "$_VDGG_SEAT_NAME" in
+    claude|codex)
+      # The ban applies to the bundled non-interactive wrappers only; a
+      # user-defined executors/<name>.conf overrides the builtin (same
+      # decision _vdgg_seat_command makes) and may own the interactive seat.
+      if { [ "$key" = "STEP_0_AI" ] || [ "$key" = "STEP_0_GRILL_AI" ]; } \
+          && [ ! -f "$(_vdgg_executor_file "$_VDGG_SEAT_NAME")" ]; then
+        echo "vdgg-formation: builtin '$_VDGG_SEAT_NAME' is non-interactive and cannot own the interactive seat ($key); use a bare executor name instead" >&2
+        return 1
+      fi
+      ;;
+  esac
+}
+
 _vdgg_validate_formation_file() {
-  local formation="$1" file line key value seen="" required
+  local formation="$1" file line seat value key seen=""
   _vdgg_name_is_safe "$formation" || {
     echo "vdgg-formation: invalid formation name: $formation" >&2
     return 1
@@ -174,42 +299,100 @@ _vdgg_validate_formation_file() {
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       ''|'#'*) continue ;;
-      *=*) ;;
-      *) echo "vdgg-formation: invalid line in $file: $line" >&2; return 1 ;;
+      STEP_*=*)
+        echo "vdgg-formation: $file uses the old KEY=VALUE format. Rewrite each delegated seat as '<seat>: <ai>' (e.g. '3: codex' or '6: claude sonnet low'); unlisted seats default to inline." >&2
+        return 1
+        ;;
+      *:*) ;;
+      *)
+        echo "vdgg-formation: invalid line in $file: $line (expected '<seat>: <ai> [model] [effort]')" >&2
+        return 1
+        ;;
     esac
-    key=${line%%=*}
-    value=${line#*=}
-    _vdgg_step_key_is_valid "$key" || {
-      echo "vdgg-formation: unknown key in $file: $key" >&2
-      return 1
-    }
-    _vdgg_name_is_safe "$value" || {
-      echo "vdgg-formation: invalid AI name for $key: $value" >&2
-      return 1
-    }
+    seat=$(_vdgg_trim "${line%%:*}")
+    value=$(_vdgg_trim "${line#*:}")
+    if [ "$seat" = "*" ]; then
+      key="*"
+    else
+      case "$seat" in
+        1|2|5|8|9)
+          echo "vdgg-formation: seat $seat is inline-only and cannot be assigned in $file" >&2
+          return 1
+          ;;
+      esac
+      key=$(_vdgg_seat_to_key "$seat") || {
+        echo "vdgg-formation: unknown seat in $file: $seat (valid: 0, 3, 4, 6, 6R, 7, grill, *)" >&2
+        return 1
+      }
+    fi
     case "
 $seen
 " in
       *"
 $key
-"*) echo "vdgg-formation: duplicate key in $file: $key" >&2; return 1 ;;
+"*) echo "vdgg-formation: duplicate seat in $file: $seat" >&2; return 1 ;;
     esac
     seen="${seen}${seen:+
 }${key}"
+    # For "*" lines the key is the literal "*": it never matches the
+    # interactive seats, and error messages show what the user wrote.
+    _vdgg_check_seat_value "$key" "$value" || return 1
   done < "$file"
-
-  for required in $(_vdgg_formation_keys); do
-    printf '%s\n' "$seen" | grep -qxF "$required" || {
-      echo "vdgg-formation: missing key in $file: $required" >&2
-      return 1
-    }
-  done
 }
 
 _vdgg_formation_value() {
-  local formation="$1" step_key="$2" file
+  local formation="$1" step_key="$2" file line seat value key explicit="" wildcard=""
   file=$(_vdgg_formation_file "$formation")
-  grep -m1 "^${step_key}=" "$file" | cut -d= -f2-
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    seat=$(_vdgg_trim "${line%%:*}")
+    value=$(_vdgg_trim "${line#*:}")
+    if [ "$seat" = "*" ]; then
+      wildcard="$value"
+      continue
+    fi
+    key=$(_vdgg_seat_to_key "$seat" 2>/dev/null) || continue
+    [ "$key" = "$step_key" ] && explicit="$value"
+  done < "$file"
+  if [ -n "$explicit" ]; then
+    printf '%s\n' "$explicit"
+  elif [ -n "$wildcard" ] && _vdgg_key_in_wildcard "$step_key"; then
+    printf '%s\n' "$wildcard"
+  else
+    printf '%s\n' "inline"
+  fi
+}
+
+# Resolve a validated seat value ("<name> [model] [effort]") to an executable.
+# A user-defined executors/<name>.conf wins over the builtin claude/codex
+# wrappers; model/effort tokens are only meaningful on the builtin path.
+_vdgg_seat_command() {
+  local value="$1" label="${2:-seat value}" name bundled
+  _vdgg_parse_seat_value "$value" "$label" || return 1
+  name="$_VDGG_SEAT_NAME"
+  if [ -f "$(_vdgg_executor_file "$name")" ]; then
+    [ -z "${_VDGG_SEAT_MODEL}${_VDGG_SEAT_EFFORT}" ] || {
+      echo "vdgg-formation: executors/${name}.conf overrides the builtin; model/effort tokens are not allowed: $value" >&2
+      return 1
+    }
+    _vdgg_executor_command "$name"
+    return
+  fi
+  case "$name" in
+    claude|codex)
+      bundled="${_VDGG_SCRIPT_DIR}/vdgg-exec-${name}.sh"
+      [ -f "$bundled" ] && [ -x "$bundled" ] || {
+        echo "vdgg-formation: bundled executor missing or not executable: $bundled" >&2
+        return 1
+      }
+      printf '%s\n' "$bundled"
+      ;;
+    *)
+      _vdgg_executor_command "$name"
+      ;;
+  esac
 }
 
 _vdgg_executor_command() {
@@ -277,7 +460,7 @@ vdgg_formation_preflight() {
   _vdgg_validate_formation_file "$formation" || return 1
   for step_key in $(_vdgg_formation_keys); do
     ai=$(_vdgg_formation_value "$formation" "$step_key")
-    [ "$ai" = "inline" ] || _vdgg_executor_command "$ai" >/dev/null || return 1
+    [ "$ai" = "inline" ] || _vdgg_seat_command "$ai" "$step_key" >/dev/null || return 1
   done
 }
 
@@ -336,9 +519,12 @@ vdgg_executor_run() {
     echo "vdgg-formation: $step_key is assigned to inline; no external executor was run" >&2
     return 1
   }
-  command=$(_vdgg_executor_command "$ai") || return 1
+  command=$(_vdgg_seat_command "$ai" "$step_key") || return 1
+  _vdgg_parse_seat_value "$ai" "$step_key" || return 1
   VDGG_EXECUTOR_FORMATION="$formation" \
-  VDGG_EXECUTOR_AI="$ai" \
+  VDGG_EXECUTOR_AI="$_VDGG_SEAT_NAME" \
+  VDGG_EXECUTOR_MODEL="$_VDGG_SEAT_MODEL" \
+  VDGG_EXECUTOR_EFFORT="$_VDGG_SEAT_EFFORT" \
   VDGG_EXECUTOR_STEP="$step_key" \
   VDGG_EXECUTOR_INPUT="$input_file" \
   VDGG_EXECUTOR_OUTPUT="$output_file" \

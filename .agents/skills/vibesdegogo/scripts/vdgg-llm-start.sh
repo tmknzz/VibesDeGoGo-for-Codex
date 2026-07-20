@@ -345,7 +345,7 @@ _dry_run() {
 }
 
 _start() {
-    local id="$1" old_IFS
+    local id="$1" old_IFS argv
     _parse_block "$id"
     # startup enforcement matches --check: refuse on mode!=600 or missing file
     if [ -n "$KV_api_key_file" ]; then
@@ -353,14 +353,16 @@ _start() {
     fi
     _warn_if_public_host "$id"
 
-    # Re-materialize _emit_argv's newline-separated tokens into $@ and exec.
-    # extra_flags is the only source of multi-token values, and _emit_argv has
-    # already split it into one-per-line, so newline-only IFS is safe.
+    # Emit under DEFAULT IFS so `for tok in $KV_extra_flags` inside _emit_argv
+    # word-splits on whitespace as intended. Only then switch to newline-only
+    # IFS for the final `set --` expansion, which needs to keep any argv value
+    # that contains a space (paths, prompts) as one positional.
+    argv=$(_emit_argv)
     old_IFS=$IFS
     IFS='
 '
-    # shellcheck disable=SC2046
-    set -- $(_emit_argv)
+    # shellcheck disable=SC2046,SC2086
+    set -- $argv
     IFS=$old_IFS
     exec "$@"
 }

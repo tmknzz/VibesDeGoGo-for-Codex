@@ -109,6 +109,14 @@ Save this template as
     <string>/usr/local/bin/vdgg-llm-start</string>
     <string>qwen</string>
   </array>
+  <!-- launchd's default PATH is /usr/bin:/bin:/usr/sbin:/sbin — Homebrew's
+       /opt/homebrew/bin is not on it, so the launcher's `exec llama-server`
+       would fail with "command not found". Point at the absolute path. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VDGG_LLAMA_SERVER_BIN</key>
+    <string>/opt/homebrew/bin/llama-server</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
